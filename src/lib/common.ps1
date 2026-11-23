@@ -34,7 +34,24 @@ function Write-ZLog {
         'DEBUG' { Write-Host $line -ForegroundColor DarkGray }
         default { Write-Host $line }
     }
+    try {
+        # Rotate the log once it grows past 5 MB (keep one previous file).
+        $fi = Get-Item -LiteralPath $ZLogFile -ErrorAction SilentlyContinue
+        if ($fi -and $fi.Length -gt 5MB) { Move-Item -LiteralPath $ZLogFile -Destination ($ZLogFile + '.1') -Force -ErrorAction SilentlyContinue }
+    } catch { }
     try { Add-Content -LiteralPath $ZLogFile -Value $line -Encoding UTF8 } catch { }
+}
+
+# Atomic JSON write: a power loss must not leave a half-written state file.
+function Write-ZJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)]$Object,
+        [int]$Depth = 10
+    )
+    $tmp = $Path + '.tmp'
+    ($Object | ConvertTo-Json -Depth $Depth) | Set-Content -LiteralPath $tmp -Encoding UTF8
+    Move-Item -LiteralPath $tmp -Destination $Path -Force
 }
 
 function Test-ZAdmin {
@@ -187,7 +204,7 @@ function Save-ZServiceBackup {
         startType   = $(if ($svc) { $svc.StartType.ToString() } else { 'Automatic' })
         backupTime  = (Get-Date).ToString('o')
     }
-    ($obj | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $path -Encoding UTF8
+    Write-ZJson -Path $path -Object $obj -Depth 5
     if ($obj.existed) { Write-ZLog 'Резервная копия конфигурации старой службы сохранена.' OK }
 }
 
@@ -206,7 +223,7 @@ function Save-ZInstalledInfo {
         installedAt = (Get-Date).ToString('o')
         root        = $ZRoot
     }
-    ($obj | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath (Join-Path $ZState 'installed.json') -Encoding UTF8
+    Write-ZJson -Path (Join-Path $ZState 'installed.json') -Object $obj -Depth 5
 }
 
 function Get-ZInstalledInfo {
@@ -249,6 +266,11 @@ function Read-ZPause {
 #  Force a TrueType font for the current window and for future console windows.
 # ---------------------------------------------------------------------------
 function Initialize-ZConsole {
+    # Font work needs Add-Type (~300 ms). Skip it for non-interactive runs
+    # (watchdog, tuning, redirected output) where there is no console window.
+    $interactive = $false
+    try { $interactive = ($Host.Name -eq 'ConsoleHost') -and (-not [Console]::IsOutputRedirected) } catch { }
+    if ($interactive) {
     try {
         if (-not ('ZapretConsole' -as [type])) {
             Add-Type -TypeDefinition @'
@@ -290,6 +312,7 @@ public static class ZapretConsole {
             [void][ZapretConsole]::SetFont('Consolas', 18)
         }
     } catch { }
+    }
 
     try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
     try { $global:OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
