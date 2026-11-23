@@ -147,7 +147,7 @@ try {
     if ($baselineScore -ge 95 -and -not $NoInstall) {
         Write-ZLog ('Блокировок не обнаружено (baseline {0}%). Установка не требуется.' -f $baselineScore) OK
         $report.applied = $false
-        ($report | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath (Join-Path $ZState 'tune-results.json') -Encoding UTF8
+        Write-ZJson -Path (Join-Path $ZState 'tune-results.json') -Object $report -Depth 10
         exit 0
     }
 
@@ -157,8 +157,7 @@ try {
     if ($second.Count -gt 0) {
         $sp = @($allProfiles | Where-Object { $_.id -eq $second[0].id })[0]
         if ($sp) {
-            ([ordered]@{ id = $sp.id; name = $sp.name; desc = $sp.desc; engine = 'winws1'; args = $sp.args } | ConvertTo-Json -Depth 6) |
-                Set-Content -LiteralPath $fallbackPath -Encoding UTF8
+            Write-ZJson -Path $fallbackPath -Object ([ordered]@{ id = $sp.id; name = $sp.name; desc = $sp.desc; engine = 'winws1'; args = $sp.args }) -Depth 6
             Write-ZLog ('Резервный профиль: {0} ({1})' -f $sp.name, $sp.id) INFO
         }
     } else {
@@ -246,7 +245,7 @@ try {
     if (-not $chosen) {
         Write-ZLog 'Ни один профиль не прошёл финальную проверку (браузер/скорость). Возвращаю исходную конфигурацию.' ERROR
         $report.applied = $false
-        ($report | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath (Join-Path $ZState 'tune-results.json') -Encoding UTF8
+        Write-ZJson -Path (Join-Path $ZState 'tune-results.json') -Object $report -Depth 10
         throw 'Финальная проверка не пройдена: профиль не открывает YouTube в браузере или режет скорость.'
     }
 
@@ -296,7 +295,7 @@ try {
         $report['final'] = [ordered]@{ score = $final.score; categories = $final.categories; controlsOk = $final.controlsOk }
     }
 
-    ($report | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath (Join-Path $ZState 'tune-results.json') -Encoding UTF8
+    Write-ZJson -Path (Join-Path $ZState 'tune-results.json') -Object $report -Depth 10
 
     $elapsed = [int]((Get-Date) - $startedAt).TotalSeconds
     Write-ZLog ('АВТОТЮНИНГ ЗАВЕРШЁН за ' + (Format-ZDuration $elapsed)) OK
