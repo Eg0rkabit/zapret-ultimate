@@ -1,4 +1,4 @@
-﻿# ============================================================================
+# ============================================================================
 #  Zapret Ultimate - watchdog
 #  Runs from Task Scheduler as SYSTEM every 5 minutes.
 #  1. ensuress the service and winws.exe are alive;
@@ -83,6 +83,26 @@ $targets = @(Get-ZTargets | Where-Object { $_.key -in @('DiscordMain', 'YouTubeW
 $res = Invoke-ZProbe -Targets $targets -TimeoutMs 3500 -Quiet -NoRetry
 $sc = Get-ZProbeScore -Results $res
 Write-WLog ('Проверка: ' + (Format-ZProbeSummary -Scored $sc)) DEBUG
+
+# Every 30 minutes scan known GGC nodes in a hidden process and block the dead
+# ones. This is what makes the fix automatic: no manual commands after a hang.
+$ggcStamp = Join-Path $ZState 'ggc-last.txt'
+$lastGgc = $null
+if (Test-Path -LiteralPath $ggcStamp) {
+    try { $lastGgc = [datetime]::Parse((Get-Content -LiteralPath $ggcStamp -Raw).Trim()) } catch { }
+}
+if (-not $lastGgc -or ((Get-Date) - $lastGgc).TotalMinutes -ge 30) {
+    if (-not (Test-ZLock -Name 'operation')) {
+        try {
+            $zp = Join-Path (Split-Path -Parent $PSScriptRoot) 'Zapret.ps1'
+            Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ("& '" + $zp + "' ggc-check")) -WindowStyle Hidden | Out-Null
+            (Get-Date).ToString('o') | Set-Content -LiteralPath $ggcStamp -Encoding UTF8
+            Write-WLog 'Запущена фоновая проверка GGC-узлов.' DEBUG
+        } catch {
+            Write-WLog ('GGC-проверка не запустилась: ' + $_.Exception.Message) WARN
+        }
+    }
+}
 
 if ($sc.controlsOk -and $sc.score -ge 60) { return }   # everything is fine
 
