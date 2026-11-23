@@ -1,0 +1,12 @@
+# runtime data - never commit
+logs/
+state/
+config/active.conf
+tools/yt-dlp.exe
+
+# archives belong to GitHub Releases
+*.zip
+
+# misc
+*.log
+*.tmp
