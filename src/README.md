@@ -89,6 +89,8 @@ Zapret.bat list            :: профили и их прошлые оценки
 Zapret.bat apply fake-hfs-ts
 Zapret.bat restore         :: вернуть службу, которая была до установки
 Zapret.bat fix-hosts       :: убрать битые записи YouTube из hosts
+Zapret.bat quic-off        :: отключить QUIC в Brave/Chrome/Edge (если видео встаёт)
+Zapret.bat quic-on         :: вернуть QUIC
 Zapret.bat uninstall
 ```
 
@@ -192,7 +194,7 @@ SNI к **поведенческому скорингу** и **заморозке
 | Антивирус удаляет `winws.exe` | добавьте `C:\Zapret` в исключения |
 | Ничего не помогает | `Zapret.bat tune` (полный), затем `diagnose` и `test` |
 | Служба смотрит в старую папку | `Zapret.bat diagnose` покажет; переустановите через `Install.bat` |
-| YouTube открывается, но видео не играет | проверьте `Zapret.bat diagnose`: если в hosts есть записи `0.0.0.0 ... googlevideo.com`, выполните `Zapret.bat fix-hosts` и перезапустите браузер. Такие записи — устаревший «GGC fix», YouTube выбирает именно заблокированный узел CDN |
+| YouTube открывается, но видео играет пару секунд и встаёт | сначала `Zapret.bat quic-off` и **полностью** перезапустите браузер: часто виноват QUIC (HTTP/3), который тихо умирает, а TCP-путь исправен. Если не помогло — `Zapret.bat diagnose` (заморозка/GGC) и `Zapret.bat fix-hosts` (битые записи `0.0.0.0 ... googlevideo.com`) |
 | В консоли вместо русского текста пустота | окно использует растровый шрифт «Terminal» без кириллицы. Программа сама переключает его на Consolas при запуске; вручную: правый клик по заголовку окна → Свойства → Шрифт → Consolas |
 
 Логи: `logs\zapret.log`, `logs\watchdog.log`, `logs\report-*.json`,
