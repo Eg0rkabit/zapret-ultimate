@@ -1,0 +1,23 @@
+[
+  { "key": "DiscordMain",     "host": "discord.com",                "cat": "discord",   "weight": 3, "http": true },
+  { "key": "DiscordGateway",  "host": "gateway.discord.gg",         "cat": "discord",   "weight": 2, "http": false },
+  { "key": "DiscordCDN",      "host": "cdn.discordapp.com",         "cat": "discord",   "weight": 2, "http": true },
+  { "key": "DiscordUpdates",  "host": "updates.discord.com",        "cat": "discord",   "weight": 1, "http": false },
+
+  { "key": "YouTubeWeb",      "host": "www.youtube.com",            "cat": "youtube",   "weight": 3, "http": true },
+  { "key": "YouTubeShort",    "host": "youtu.be",                   "cat": "youtube",   "weight": 2, "http": false },
+  { "key": "YouTubeImage",    "host": "i.ytimg.com",                "cat": "youtube",   "weight": 1, "http": true },
+  { "key": "YouTubeRedirect", "host": "redirector.googlevideo.com", "cat": "youtube",   "weight": 3, "http": false },
+
+  { "key": "GoogleMain",      "host": "www.google.com",             "cat": "google",    "weight": 2, "http": true },
+  { "key": "GoogleStatic",    "host": "www.gstatic.com",            "cat": "google",    "weight": 1, "http": false },
+
+  { "key": "CloudflareWeb",   "host": "www.cloudflare.com",         "cat": "cloudflare","weight": 1, "http": true },
+  { "key": "CloudflareCDN",   "host": "cdnjs.cloudflare.com",       "cat": "cloudflare","weight": 1, "http": false },
+
+  { "key": "ControlYa",       "host": "ya.ru",                      "cat": "control",   "weight": 2, "http": true },
+  { "key": "ControlGosuslugi", "host": "www.gosuslugi.ru",          "cat": "control",   "weight": 2, "http": true },
+  { "key": "ControlVK",       "host": "vk.com",                     "cat": "control",   "weight": 1, "http": true },
+  { "key": "ControlMail",     "host": "mail.ru",                    "cat": "control",   "weight": 1, "http": true },
+  { "key": "ControlOzon",     "host": "ozon.ru",                    "cat": "control",   "weight": 1, "http": true }
+]
