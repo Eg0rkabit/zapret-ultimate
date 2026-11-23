@@ -350,6 +350,55 @@ function Get-ZQuicPolicyState {
     return $false
 }
 
+$script:ZGgcWatchFile = Join-Path $ZState 'ggc-watch.txt'
+
+function Initialize-ZGgcWatchList {
+    if (Test-Path -LiteralPath $script:ZGgcWatchFile) { return }
+    $list = @()
+    foreach ($g in @('8v1l', '8v1s', 'n8vs')) {
+        foreach ($n in 1..8) { $list += "rr$n---sn-8ph2xajvh-$g.googlevideo.com" }
+    }
+    $list | Set-Content -LiteralPath $script:ZGgcWatchFile -Encoding UTF8
+}
+
+# Checks every host from state\ggc-watch.txt and blocks the dead ones in hosts.
+# This is how "video hangs on a dead GGC node" is fixed without touching the
+# working nodes (blocking the whole cluster broke playback for other videos).
+function Invoke-ZGgcCheck {
+    Assert-ZAdmin
+    Initialize-ZGgcWatchList
+    $cands = @(Get-Content -LiteralPath $script:ZGgcWatchFile -Encoding UTF8 | Where-Object { $_.Trim() -ne '' })
+    if ($cands.Count -eq 0) { Write-Host '  Список state\ggc-watch.txt пуст.' -ForegroundColor Yellow; return }
+    Write-Host ("  Проверяю {0} узлов GGC..." -f $cands.Count) -ForegroundColor DarkGray
+    $dead = @()
+    foreach ($h in $cands) {
+        $code = (& curl.exe -s -o NUL -w '%{http_code}' --max-time 5 "https://$h/generate_204" 2>$null) -join ''
+        if ($code -notmatch '^(2|3)\d\d$') { $dead += $h }
+    }
+    if ($dead.Count -eq 0) {
+        Write-Host '  Мёртвых узлов не найдено.' -ForegroundColor Green
+        return
+    }
+    $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $backup = Join-Path $ZState ('hosts-ggc-backup-' + $stamp + '.txt')
+    Copy-Item -LiteralPath $hosts -Destination $backup -Force
+    $lines = Get-Content -LiteralPath $hosts -Encoding Default
+    $out = New-Object System.Collections.ArrayList
+    foreach ($line in $lines) {
+        if ($line -match 'zapret-ultimate dead ggc') { continue }
+        [void]$out.Add($line)
+    }
+    [void]$out.Add('# zapret-ultimate dead ggc')
+    foreach ($d in $dead) { [void]$out.Add("0.0.0.0 $d # zapret-ultimate dead ggc") }
+    [IO.File]::WriteAllLines($hosts, $out, [Text.Encoding]::Default)
+    & ipconfig.exe /flushdns | Out-Null
+    Write-ZLog ('Заблокировано мёртвых GGC-узлов: {0}. Бэкап: {1}' -f $dead.Count, $backup) OK
+    Write-Host ('  Заблокировано мёртвых узлов: {0}' -f $dead.Count) -ForegroundColor Green
+    Write-Host ('  Бэкап: {0}' -f $backup) -ForegroundColor DarkGray
+    Write-Host '  Полностью перезапустите браузер.' -ForegroundColor Yellow
+}
+
 function Repair-ZHosts {    Show-ZHeader 'ИСПРАВЛЕНИЕ HOSTS'
     Assert-ZAdmin
     $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
@@ -366,7 +415,7 @@ function Repair-ZHosts {    Show-ZHeader 'ИСПРАВЛЕНИЕ HOSTS'
         # A stale "YouTube GGC fix" maps CDN nodes to 0.0.0.0. YouTube then
         # picks exactly those nodes for some videos and playback never starts.
         if ($line -match '^\s*0\.0\.0\.0\s+\S*(googlevideo|youtube|ytimg|ggpht)\.') { $removed++; continue }
-        if ($line -match 'YouTube GGC fix|fix_youtube_hosts') { $removed++; continue }
+        if ($line -match 'YouTube GGC fix|fix_youtube_hosts|zapret-ultimate dead ggc') { $removed++; continue }
         [void]$out.Add($line)
     }
     if ($removed -eq 0) {
@@ -411,6 +460,7 @@ function Show-ZMenu {
         Write-Host '  13. Исправить hosts (битые GGC-записи YouTube)'
         Write-Host '  14. Отключить QUIC (Brave/Chrome/Edge)'
         Write-Host '  15. Включить QUIC обратно'
+        Write-Host '  16. Проверить и заблокировать мёртвые GGC-узлы'
         Write-Host '   0. Выход'
         Write-Host ''
         $c = Read-Host '  Выбор'
@@ -459,6 +509,10 @@ function Show-ZMenu {
                 } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
                 Read-ZPause
             }
+            '16' {
+                try { Invoke-ZGgcCheck } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
+                Read-ZPause
+            }
             '15' {
                 try {
                     Set-ZQuicPolicy
@@ -498,6 +552,7 @@ try {
             Set-ZQuicPolicy -Disable
             Write-Host 'QUIC отключён для Brave/Chrome/Edge. Полностью закройте и откройте браузер.' -ForegroundColor Green
         }
+        'ggc-check' { Invoke-ZGgcCheck }
         'quic-on' {
             Set-ZQuicPolicy
             Write-Host 'QUIC снова включён. Перезапустите браузер.' -ForegroundColor Green
@@ -505,7 +560,7 @@ try {
         'uninstall' { Invoke-ZUninstall }
         'menu' { Show-ZMenu }
         default {
-            Write-Host 'Команды: status, start, stop, restart, tune, quick, apply <id>, list, test, diagnose, fix-hosts, quic-off, quic-on, restore, uninstall, menu'
+            Write-Host 'Команды: status, start, stop, restart, tune, quick, apply <id>, list, test, diagnose, fix-hosts, quic-off, quic-on, ggc-check, restore, uninstall, menu'
         }
     }
 } catch {
