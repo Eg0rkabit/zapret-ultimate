@@ -38,7 +38,7 @@ $recent = @($ws.restarts | Where-Object { $_ } | ForEach-Object { [datetime]$_ }
 
 function Save-WState {
     $obj = [ordered]@{ restarts = @($recent | ForEach-Object { $_.ToString('o') }); lastProfileSwitch = $ws.lastProfileSwitch }
-    ($obj | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $statePath -Encoding UTF8
+    Write-ZJson -Path $statePath -Object $obj -Depth 4
 }
 
 # ---------------------------------------------------------------- liveness --
@@ -80,7 +80,7 @@ if ($state -ne 'Running' -or $procs.Count -eq 0) {
 
 # ------------------------------------------------------------------- probe --
 $targets = @(Get-ZTargets | Where-Object { $_.key -in @('DiscordMain', 'YouTubeWeb', 'YouTubeRedirect', 'ControlYa') })
-$res = Invoke-ZProbe -Targets $targets -TimeoutMs 3500 -Quiet
+$res = Invoke-ZProbe -Targets $targets -TimeoutMs 3500 -Quiet -NoRetry
 $sc = Get-ZProbeScore -Results $res
 Write-WLog ('Проверка: ' + (Format-ZProbeSummary -Scored $sc)) DEBUG
 
@@ -88,7 +88,7 @@ if ($sc.controlsOk -and $sc.score -ge 60) { return }   # everything is fine
 
 function Test-ZAfterRestart {
     Start-Sleep -Seconds 4
-    $r = Invoke-ZProbe -Targets $targets -TimeoutMs 3500 -Quiet
+    $r = Invoke-ZProbe -Targets $targets -TimeoutMs 3500 -Quiet -NoRetry
     return (Get-ZProbeScore -Results $r)
 }
 
