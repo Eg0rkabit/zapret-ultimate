@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 #  Zapret Ultimate - CLI entry point
 #  Usage: Zapret.ps1 [status|start|stop|restart|tune|quick|apply|list|test|
 #                     diagnose|restore|uninstall|menu]
@@ -101,9 +101,10 @@ function Show-ZStatus {
     if ($svc) { Write-Host ("  Автозапуск    : {0}" -f $svc.StartType) }
 
     Write-Host ''
+    if (Test-ZLock -Name 'operation') { Write-Host '  ВНИМАНИЕ: идёт тюнинг/установка — проверка может быть неточной.' -ForegroundColor Yellow }
     Write-Host '  Быстрая проверка доступности...' -ForegroundColor DarkGray
     $targets = @(Get-ZTargets | Where-Object { $_.key -in @('DiscordMain', 'YouTubeWeb', 'YouTubeRedirect', 'ControlYa') })
-    $res = Invoke-ZProbe -Targets $targets -TimeoutMs 4000 -Quiet
+    $res = Invoke-ZProbe -Targets $targets -TimeoutMs 4000 -Quiet -NoRetry
     $sc = Get-ZProbeScore -Results $res
     Write-Host ('  ' + (Format-ZProbeSummary -Scored $sc)) -ForegroundColor $(if ($sc.score -ge 90 -and $sc.controlsOk) { 'Green' } else { 'Yellow' })
     foreach ($d in $sc.details) {
@@ -167,6 +168,10 @@ function Show-ZTest {
         time = (Get-Date).ToString('o'); score = $sc.score; categories = $sc.categories
         controlsOk = $sc.controlsOk; details = $sc.details; youtube = $yt; freeze = $freeze
         browser = $null; playback = $null; bulk = $null; profile = (Get-ZInstalledInfo)
+        os = ((Get-CimInstance Win32_OperatingSystem).Caption + ' ' + [Environment]::OSVersion.Version.ToString())
+        ps = $PSVersionTable.PSVersion.ToString()
+        browsers = (@(Get-ZBrowserCandidates) | ForEach-Object { Split-Path $_ -Leaf }) -join ','
+        quicOff = (Get-ZQuicPolicyState)
     }
 
     Write-Host '  Проверка больших загрузок (Cloudflare 2 МБ + Discord)...' -ForegroundColor DarkGray
@@ -395,8 +400,8 @@ function Show-ZMenu {
         Write-Host '   2. Запустить службу'
         Write-Host '   3. Остановить службу'
         Write-Host '   4. Перезапустить службу'
-        Write-Host '   5. АВТОТЮНИНГ (полный, ~5-10 мин)'
-        Write-Host '   6. АВТОТЮНИНГ (быстрый, ~1-2 мин)'
+        Write-Host '   5. АВТОТЮНИНГ (полный, ~3 мин)'
+        Write-Host '   6. АВТОТЮНИНГ (быстрый, ~2 мин)'
         Write-Host '   7. Полный тест + скорость YouTube'
         Write-Host '   8. Диагностика'
         Write-Host '   9. Список профилей'
