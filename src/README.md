@@ -1,4 +1,4 @@
-# Zapret Ultimate
+﻿# Zapret Ultimate
 
 Переосмысленная сборка **zapret** для Windows 10/11 x64: тот же движок `winws`
 (zapret v72.9 + WinDivert), но с **автотюнингом под вашего провайдера**, набором
@@ -91,6 +91,7 @@ Zapret.bat restore         :: вернуть службу, которая был
 Zapret.bat fix-hosts       :: убрать битые записи YouTube из hosts
 Zapret.bat quic-off        :: отключить QUIC в Brave/Chrome/Edge (если видео встаёт)
 Zapret.bat quic-on         :: вернуть QUIC
+Zapret.bat ggc-check       :: найти и заблокировать мёртвые узлы googlevideo
 Zapret.bat uninstall
 ```
 
@@ -194,6 +195,7 @@ SNI к **поведенческому скорингу** и **заморозке
 | Антивирус удаляет `winws.exe` | добавьте `C:\Zapret` в исключения |
 | Ничего не помогает | `Zapret.bat tune` (полный), затем `diagnose` и `test` |
 | Служба смотрит в старую папку | `Zapret.bat diagnose` покажет; переустановите через `Install.bat` |
+| Видео встаёт на конкретном ролике/стриме, в консоли ERR_TIMED_OUT на *.googlevideo.com | это мёртвый узел GGC: Zapret.bat ggc-check проверит список state\ggc-watch.txt и заблокирует только нерабочие узлы (рабочие останутся). Затем полностью перезапустите браузер |
 | YouTube открывается, но видео играет пару секунд и встаёт | сначала `Zapret.bat quic-off` и **полностью** перезапустите браузер: часто виноват QUIC (HTTP/3), который тихо умирает, а TCP-путь исправен. Если не помогло — `Zapret.bat diagnose` (заморозка/GGC) и `Zapret.bat fix-hosts` (битые записи `0.0.0.0 ... googlevideo.com`) |
 | В консоли вместо русского текста пустота | окно использует растровый шрифт «Terminal» без кириллицы. Программа сама переключает его на Consolas при запуске; вручную: правый клик по заголовку окна → Свойства → Шрифт → Consolas |
 
