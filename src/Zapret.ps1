@@ -1,4 +1,4 @@
-﻿# ============================================================================
+# ============================================================================
 #  Zapret Ultimate - CLI entry point
 #  Usage: Zapret.ps1 [status|start|stop|restart|tune|quick|apply|list|test|
 #                     diagnose|restore|uninstall|menu]
@@ -195,6 +195,19 @@ function Show-ZTest {
             if ($play.protocols -contains 'h3') {
                 Write-Host '  Похоже на QUIC: выполните Zapret.bat quic-off и перезапустите браузер.' -ForegroundColor Yellow
             }
+            if (@($play.hosts).Count -gt 0) {
+                Write-Host '  Проверяю узлы, которые выбрал браузер, и блокирую мёртвые...' -ForegroundColor DarkGray
+                try {
+                    Invoke-ZGgcCheck -Hosts @($play.hosts) -Quiet
+                    $play2 = Test-ZBrowserPlayback
+                    if ($play2.ok) {
+                        Write-Host ('  После блокировки мёртвого узла видео играет: {0:N1} c, буфер {1:N0} c' -f $play2.currentTime, $play2.bufferedEnd) -ForegroundColor Green
+                        $play = $play2
+                    } else {
+                        Write-Host '  Автоблокировка не помогла — нужен разбор (diagnose/DevTools).' -ForegroundColor Yellow
+                    }
+                } catch { }
+            }
         }
         $rep.playback = $play
     } else {
@@ -365,21 +378,52 @@ function Initialize-ZGgcWatchList {
 # This is how "video hangs on a dead GGC node" is fixed without touching the
 # working nodes (blocking the whole cluster broke playback for other videos).
 function Invoke-ZGgcCheck {
+    param(
+        [string[]]$Hosts,
+        [switch]$Quiet
+    )
     Assert-ZAdmin
     Initialize-ZGgcWatchList
-    $cands = @(Get-Content -LiteralPath $script:ZGgcWatchFile -Encoding UTF8 | Where-Object { $_.Trim() -ne '' })
-    if ($cands.Count -eq 0) { Write-Host '  Список state\ggc-watch.txt пуст.' -ForegroundColor Yellow; return }
-    Write-Host ("  Проверяю {0} узлов GGC..." -f $cands.Count) -ForegroundColor DarkGray
+    if ($Hosts -and $Hosts.Count -gt 0) {
+        $cands = @($Hosts | Where-Object { $_ -and $_.Trim() -ne '' } | Select-Object -Unique)
+        # Remember every node we ever tested, so the periodic check covers it.
+        $known = @(Get-Content -LiteralPath $script:ZGgcWatchFile -Encoding UTF8 -ErrorAction SilentlyContinue)
+        $new = @($cands | Where-Object { $known -notcontains $_ })
+        if ($new.Count -gt 0) { Add-Content -LiteralPath $script:ZGgcWatchFile -Value $new -Encoding UTF8 }
+    } else {
+        $cands = @(Get-Content -LiteralPath $script:ZGgcWatchFile -Encoding UTF8 | Where-Object { $_.Trim() -ne '' })
+    }
+    if ($cands.Count -eq 0) { if (-not $Quiet) { Write-Host '  Список state\ggc-watch.txt пуст.' -ForegroundColor Yellow }; return }
+    # Already-blocked nodes cannot recover while hosts redirects them, so skip
+    # them: after the first pass the periodic check touches only live nodes.
+    $hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+    $blockedNow = @()
+    try {
+        $blockedNow = @(Select-String -LiteralPath $hostsPath -Pattern '^\s*0\.0\.0\.0\s+(\S+).*zapret-ultimate dead ggc' -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.Matches[0].Groups[1].Value })
+    } catch { }
+    if ($blockedNow.Count -gt 0) { $cands = @($cands | Where-Object { $blockedNow -notcontains $_ }) }
+    if ($cands.Count -eq 0) {
+        if (-not $Quiet) { Write-Host '  Все известные мёртвые узлы уже заблокированы.' -ForegroundColor Green }
+        return
+    }
+    if (-not $Quiet) { Write-Host ("  Проверяю {0} узлов GGC..." -f $cands.Count) -ForegroundColor DarkGray }
     $dead = @()
     foreach ($h in $cands) {
-        $code = (& curl.exe -s -o NUL -w '%{http_code}' --max-time 5 "https://$h/generate_204" 2>$null) -join ''
+        $code = (& curl.exe -s -o NUL -w '%{http_code}' --max-time 4 "https://$h/generate_204" 2>$null) -join ''
         if ($code -notmatch '^(2|3)\d\d$') { $dead += $h }
     }
     if ($dead.Count -eq 0) {
-        Write-Host '  Мёртвых узлов не найдено.' -ForegroundColor Green
+        if (-not $Quiet) { Write-Host '  Мёртвых узлов не найдено.' -ForegroundColor Green }
         return
     }
     $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+    $blocked = @()
+    try {
+        $blocked = @(Select-String -LiteralPath $hosts -Pattern '^\s*0\.0\.0\.0\s+(\S+).*zapret-ultimate dead ggc' -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.Matches[0].Groups[1].Value })
+    } catch { }
+    $all = @(@($blocked) + @($dead) | Where-Object { $_ } | Select-Object -Unique)
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $backup = Join-Path $ZState ('hosts-ggc-backup-' + $stamp + '.txt')
     Copy-Item -LiteralPath $hosts -Destination $backup -Force
@@ -390,16 +434,19 @@ function Invoke-ZGgcCheck {
         [void]$out.Add($line)
     }
     [void]$out.Add('# zapret-ultimate dead ggc')
-    foreach ($d in $dead) { [void]$out.Add("0.0.0.0 $d # zapret-ultimate dead ggc") }
+    foreach ($d in $all) { [void]$out.Add("0.0.0.0 $d # zapret-ultimate dead ggc") }
     [IO.File]::WriteAllLines($hosts, $out, [Text.Encoding]::Default)
     & ipconfig.exe /flushdns | Out-Null
-    Write-ZLog ('Заблокировано мёртвых GGC-узлов: {0}. Бэкап: {1}' -f $dead.Count, $backup) OK
-    Write-Host ('  Заблокировано мёртвых узлов: {0}' -f $dead.Count) -ForegroundColor Green
-    Write-Host ('  Бэкап: {0}' -f $backup) -ForegroundColor DarkGray
-    Write-Host '  Полностью перезапустите браузер.' -ForegroundColor Yellow
+    Write-ZLog ('Заблокировано мёртвых GGC-узлов: {0} (всего {1}). Бэкап: {2}' -f $dead.Count, $all.Count, $backup) OK
+    if (-not $Quiet) {
+        Write-Host ('  Заблокировано новых мёртвых узлов: {0}, всего заблокировано: {1}' -f $dead.Count, $all.Count) -ForegroundColor Green
+        Write-Host ('  Бэкап: {0}' -f $backup) -ForegroundColor DarkGray
+        Write-Host '  Полностью перезапустите браузер.' -ForegroundColor Yellow
+    }
 }
 
-function Repair-ZHosts {    Show-ZHeader 'ИСПРАВЛЕНИЕ HOSTS'
+function Repair-ZHosts {
+    Show-ZHeader 'ИСПРАВЛЕНИЕ HOSTS'
     Assert-ZAdmin
     $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
     if (-not (Test-Path -LiteralPath $hosts)) { Write-Host '  hosts не найден.' -ForegroundColor Red; return }
