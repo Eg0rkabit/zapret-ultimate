@@ -124,7 +124,8 @@ function Invoke-ZProbe {
     param(
         [object[]]$Targets = $null,
         [int]$TimeoutMs = 5000,
-        [switch]$Quiet
+        [switch]$Quiet,
+        [switch]$NoRetry
     )
     if (-not $Targets) { $Targets = Get-ZTargets }
     $results = New-Object System.Collections.ArrayList
@@ -132,7 +133,7 @@ function Invoke-ZProbe {
         foreach ($proto in @('TLS1.2', 'TLS1.3')) {
             $doHttp = ($t.http -and $proto -eq 'TLS1.3')
             $r = Test-ZTlsHttp -HostName $t.host -Proto $proto -TimeoutMs $TimeoutMs -Http:$doHttp
-            if (-not $r.ok) {
+            if (-not $r.ok -and -not $NoRetry) {
                 # One retry: TSPU/Cloudflare answers are not perfectly stable and
                 # a single timeout should not mark a working profile as broken.
                 Start-Sleep -Milliseconds 250
