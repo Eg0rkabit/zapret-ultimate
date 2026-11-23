@@ -152,7 +152,18 @@ function Test-ZBrowserPlayback {
         Start-Sleep -Seconds 3
         [void](Invoke-ZCdpEval -Socket $ws -Id 2 -Expression "(()=>{const v=document.querySelector('video'); if(v){v.muted=true; try{v.play()}catch(e){}} return !!v})()")
 
-        Start-Sleep -Seconds $WaitSec
+        # Poll instead of sleeping the full window: healthy playback is detected
+        # in ~6-9 s, while a real stall still gets the whole WaitSec.
+        for ($elapsed = 0; $elapsed -lt $WaitSec; $elapsed += 3) {
+            Start-Sleep -Seconds 3
+            $quick = Invoke-ZCdpEval -Socket $ws -Id 10 -Expression "(()=>{const v=document.querySelector('video'); return v?JSON.stringify({t:v.currentTime||0,e:v.error?v.error.code:0}):''})()"
+            if ($quick) {
+                try {
+                    $q = $quick | ConvertFrom-Json
+                    if ([double]$q.t -ge 5 -and [int]$q.e -eq 0) { break }
+                } catch { }
+            }
+        }
 
         $expr = @'
 (() => {
