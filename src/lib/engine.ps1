@@ -187,7 +187,7 @@ function Install-ZService {
         Start-ZService
         Start-Sleep -Milliseconds 1200
         if ((Get-ZServiceState) -ne 'Running') { throw 'Служба создана, но не запустилась.' }
-        if (@(Get-ZWinwsProcesses).Count -eq 0) { throw 'Служба запущена, но процесс winws.exe отсутствует.' }
+        if (-not (Test-ZWinwsRunning)) { throw 'Служба запущена, но процесс winws.exe отсутствует.' }
     } catch {
         $failMsg = $_.Exception.Message
         Write-ZLog ('Не удалось установить службу: ' + $failMsg) ERROR
@@ -263,7 +263,7 @@ function Apply-ZProfile {
     # Nothing to do if the very same command line is already running.
     $newBinPath = '"{0}" {1}' -f (Join-Path $ZBin 'winws.exe'), (Get-ZInlineArgLine -Arguments $profile.args)
     $curBinPath = Get-ZServiceImagePath
-    if ($curBinPath -and $curBinPath.Trim() -eq $newBinPath.Trim() -and (Get-ZServiceState) -eq 'Running' -and @(Get-ZWinwsProcesses).Count -gt 0) {
+    if ($curBinPath -and $curBinPath.Trim() -eq $newBinPath.Trim() -and (Get-ZServiceState) -eq 'Running' -and (Test-ZWinwsRunning)) {
         Save-ZInstalledInfo -ProfileId $profile.id -ProfileName $profile.name
         Write-ZLog ("Профиль {0} уже активен, перезапуск не требуется." -f $profile.id) OK
         return $profile
