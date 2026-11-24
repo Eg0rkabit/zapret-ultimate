@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 #  Zapret Ultimate - auto tuner
 #
 #  Measures what is actually blocked on this ISP right now, benchmarks every
@@ -29,6 +29,15 @@ $root = Split-Path -Parent $PSScriptRoot
 $ErrorActionPreference = 'Stop'
 Assert-ZAdmin
 
+# The report is saved several times during a run: a tuning pass takes minutes
+# and must not lose its results if it is interrupted or the PC goes to sleep.
+function Save-ZTuneReport {
+    param($Report)
+    if ($null -eq $Report) { return }
+    try { Write-ZJson -Path (Join-Path $ZState 'tune-results.json') -Object $Report -Depth 10 }
+    catch { Write-ZLog ('Не удалось сохранить state\tune-results.json: ' + $_.Exception.Message) WARN }
+}
+
 # The lite package has no yt-dlp: speed measurement is then skipped instead of
 # rejecting every profile.
 if (-not $SkipSpeed -and -not (Test-Path -LiteralPath (Join-Path $ZTools 'yt-dlp.exe'))) {
@@ -44,7 +53,6 @@ $installedOk = $false
 $appliedNew = $false
 $startedAt = Get-Date
 $prevImage = Get-ZServiceImagePath
-$prevWasRunning = ((Get-ZServiceState) -eq 'Running')
 $baselineScore = 0.0
 
 try {
@@ -151,18 +159,9 @@ try {
         exit 0
     }
 
-    # Runner-up for the watchdog. Remove a stale file if there is no runner-up.
-    $second = @($valid | Where-Object { $_.id -ne $valid[0].id } | Select-Object -First 1)
-    $fallbackPath = Join-Path $ZState 'fallback-profile.json'
-    if ($second.Count -gt 0) {
-        $sp = @($allProfiles | Where-Object { $_.id -eq $second[0].id })[0]
-        if ($sp) {
-            Write-ZJson -Path $fallbackPath -Object ([ordered]@{ id = $sp.id; name = $sp.name; desc = $sp.desc; engine = 'winws1'; args = $sp.args }) -Depth 6
-            Write-ZLog ('Резервный профиль: {0} ({1})' -f $sp.name, $sp.id) INFO
-        }
-    } else {
-        Remove-Item -LiteralPath $fallbackPath -Force -ErrorAction SilentlyContinue
-    }
+    # Save screening results right away: the finalist/browser phase takes
+    # minutes, and an interruption must not lose everything measured so far.
+    Save-ZTuneReport -Report $report
 
     # ---------------------------------------------------------- finalists ---
     # A profile is only accepted after a real YouTube download and a real
@@ -242,6 +241,8 @@ try {
         }
     }
 
+    Save-ZTuneReport -Report $report
+
     if (-not $chosen) {
         Write-ZLog 'Ни один профиль не прошёл финальную проверку (браузер/скорость). Возвращаю исходную конфигурацию.' ERROR
         $report.applied = $false
@@ -251,6 +252,20 @@ try {
 
     $best = $chosen
     $report.best = $best
+    # Runner-up for the watchdog. Chosen AFTER the winner is known and never
+    # equal to it: otherwise the fallback is the profile that was just installed
+    # (or one that failed its finalist checks) and the watchdog can never switch.
+    $fallbackPath = Join-Path $ZState 'fallback-profile.json'
+    $runnerUp = @($valid | Where-Object { $_.id -ne $best.id } | Select-Object -First 1)
+    if ($runnerUp.Count -gt 0) {
+        $fbProfile = @($allProfiles | Where-Object { $_.id -eq $runnerUp[0].id })[0]
+        if ($fbProfile) {
+            Write-ZJson -Path $fallbackPath -Object ([ordered]@{ id = $fbProfile.id; name = $fbProfile.name; desc = $fbProfile.desc; engine = 'winws1'; args = $fbProfile.args }) -Depth 6
+            Write-ZLog ('Резервный профиль: {0} ({1})' -f $fbProfile.name, $fbProfile.id) INFO
+        }
+    } else {
+        Remove-Item -LiteralPath $fallbackPath -Force -ErrorAction SilentlyContinue
+    }
     Write-ZLog ('ЛУЧШИЙ ПРОФИЛЬ: {0} ({1})' -f $best.name, $best.id) OK
 
     # ------------------------------------------------------------ install ---
@@ -305,6 +320,8 @@ try {
         Write-Host ('   {0,-22} {1,6}%  controls={2,-6} {3}' -f $_.id, $_.score, $_.controlsOk, $_.error)
     }
 } finally {
+    # Best-effort: keep whatever was measured even if the run failed halfway.
+    Save-ZTuneReport -Report $report
     Exit-ZLock
     if (-not $installedOk) {
         if ($appliedNew -and $prevImage) {
