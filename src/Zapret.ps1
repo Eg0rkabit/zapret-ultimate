@@ -1,7 +1,8 @@
-# ============================================================================
+﻿# ============================================================================
 #  Zapret Ultimate - CLI entry point
 #  Usage: Zapret.ps1 [status|start|stop|restart|tune|quick|apply|list|test|
-#                     diagnose|restore|uninstall|menu]
+#                     diagnose|fix-hosts|quic-off|quic-on|ggc-check|ggc-reset|
+#                     fix-acl|disable-legacy|restore|uninstall|menu]
 # ============================================================================
 param(
     [Parameter(Position = 0)][string]$Command = 'menu',
@@ -94,11 +95,21 @@ function Show-ZStatus {
     $w = Get-Service -Name 'WinDivert' -ErrorAction SilentlyContinue
     Write-Host ("  Драйвер       : {0}" -f $(if ($w) { $w.Status } else { 'не загружен' }))
 
-    $procs = @(Get-ZWinwsProcesses)
-    Write-Host ("  Процессы winws: {0}" -f $procs.Count)
+    $allWinws = @(Get-ZWinwsProcesses)
+    $ownWinws = @(Get-ZOwnWinwsProcesses)
+    $procText = if ($ownWinws.Count -gt 0) { [string]$ownWinws.Count }
+    elseif ($allWinws.Count -gt 0) { ('{0} (путь неизвестен)' -f $allWinws.Count) }
+    else { '0' }
+    Write-Host ("  Процессы winws: {0}" -f $procText)
 
     $svc = Get-Service -Name $ZServiceName -ErrorAction SilentlyContinue
     if ($svc) { Write-Host ("  Автозапуск    : {0}" -f $svc.StartType) }
+
+    try {
+        if (-not (Test-ZRootAcl)) {
+            Write-Host '  Права папки   : ОПАСНО — запись у обычных пользователей; исправить: Zapret.bat fix-acl' -ForegroundColor Red
+        }
+    } catch { }
 
     Write-Host ''
     if (Test-ZLock -Name 'operation') { Write-Host '  ВНИМАНИЕ: идёт тюнинг/установка — проверка может быть неточной.' -ForegroundColor Yellow }
@@ -110,8 +121,10 @@ function Show-ZStatus {
     foreach ($d in $sc.details) {
         $mark = if ($d.t13 -or $d.t12) { 'OK  ' } else { 'FAIL' }
         $col = if ($d.t13 -or $d.t12) { 'Green' } else { 'Red' }
+        $tls = 'TLS1.2={0} TLS1.3={1}' -f $d.h12, $d.h13
+        if ($d.via -eq 'curl') { $tls += ' (curl fallback)' }
         Write-Host ('    {0,-22} {1}' -f $d.key, $mark) -ForegroundColor $col -NoNewline
-        Write-Host ('  TLS1.2={0} TLS1.3={1}' -f $d.t12, $d.t13) -ForegroundColor DarkGray
+        Write-Host ('  ' + $tls) -ForegroundColor DarkGray
     }
 }
 
@@ -119,19 +132,24 @@ function Show-ZProfileList {
     Show-ZHeader 'ПРОФИЛИ'
     $lib = Get-Content -LiteralPath (Join-Path $ZProfilesDir 'library.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $info = Get-ZInstalledInfo
+    $active = Get-ZActiveProfile
+    $activeId = if ($active) { $active.id } elseif ($info) { $info.profileId } else { '' }
     $scores = @{}
     $rp = Join-Path $ZState 'tune-results.json'
     if (Test-Path -LiteralPath $rp) {
         $tr = Get-Content -LiteralPath $rp -Raw -Encoding UTF8 | ConvertFrom-Json
-        foreach ($r in @($tr.results)) { if ($r.id) { $scores[$r.id] = $r.score } }
+        foreach ($r in @($tr.results)) { if ($r.id -and $r.score -ge 0) { $scores[$r.id] = $r.score } }
     }
     foreach ($p in @($lib.profiles)) {
-        $mark = if ($info -and $info.profileId -eq $p.id) { '*' } else { ' ' }
+        $mark = if ($activeId -and $activeId -eq $p.id) { '*' } else { ' ' }
         $sc = if ($scores.ContainsKey($p.id)) { ('{0}%' -f $scores[$p.id]) } else { '  -  ' }
         Write-Host ('  {0} {1,-20} {2,6}  {3}' -f $mark, $p.id, $sc, $p.name)
     }
     Write-Host ''
     Write-Host '  * — активный профиль. Применить: Zapret.bat apply <id>' -ForegroundColor DarkGray
+    if ($scores.Count -eq 0) {
+        Write-Host '  Оценок нет: полный автотюнинг ещё не сохранял state\tune-results.json (Zapret.bat tune).' -ForegroundColor DarkGray
+    }
 }
 
 function Show-ZTest {
@@ -209,6 +227,9 @@ function Show-ZTest {
                 } catch { }
             }
         }
+        # Remember the nodes the browser actually used: the periodic GGC check
+        # otherwise keeps watching a stale cluster from the seed list.
+        if ($play.ok -and @($play.hosts).Count -gt 0) { Add-ZGgcWatchHosts -Hosts @($play.hosts) }
         $rep.playback = $play
     } else {
         Write-Host ('  Проверить воспроизведение не удалось: {0}' -f $(if ($play) { $play.reason } else { 'браузер не найден' })) -ForegroundColor Yellow
@@ -225,11 +246,30 @@ function Show-ZDiagnose {
     Write-Host ("  Windows       : " + (Get-CimInstance Win32_OperatingSystem).Caption + ' ' + [Environment]::OSVersion.Version)
     Write-Host ("  Права         : " + $(if (Test-ZAdmin) { 'администратор' } else { 'НЕТ (нужен запуск от админа)' }))
 
+    try {
+        $weakAcl = @(Get-ZAclWeakAces -Path $ZRoot)
+        if ($weakAcl.Count -gt 0) {
+            Write-Host ("  Права папки   : ОПАСНО — запись у обычных пользователей (" + ((@($weakAcl | ForEach-Object { $_.Identity } | Select-Object -Unique)) -join ', ') + ')') -ForegroundColor Red
+            [void]$issues.Add(('Папка {0} доступна на запись обычным пользователям, а сторож запускает из неё скрипты от SYSTEM. Исправление: Zapret.bat fix-acl (от администратора).' -f $ZRoot))
+        } else {
+            Write-Host '  Права папки   : ограничены (Administrators/SYSTEM — запись, Users — чтение)' -ForegroundColor Green
+        }
+    } catch { }
+
+    $legacy = @(Get-ZLegacyTasks)
+    if ($legacy.Count -gt 0) {
+        Write-Host ("  Чужие задачи  : " + (($legacy | ForEach-Object { $_.Name }) -join ', ')) -ForegroundColor Yellow
+        [void]$issues.Add(('Задачи, запускающие zapret из другой папки: {0}. При загрузке/входе они могут поднять второй winws и перезаписать службу. Исправление: Zapret.bat disable-legacy' -f (($legacy | ForEach-Object { $_.Name + ' -> ' + $_.Execute }) -join '; ')))
+    }
+
     $img = Get-ZServiceImagePath
     if ($img) {
         Write-Host ("  Служба        : " + (Get-ZServiceState))
         if ($img -notlike "*$ZRoot*") {
-            [void]$issues.Add('Служба указывает на старую папку: ' + $img)
+            $exe = $img
+            if ($img -match '^"([^"]+)"') { $exe = $Matches[1] }
+            elseif ($img -match '^(\S+\.exe)') { $exe = $Matches[1] }
+            [void]$issues.Add('Служба zapret запущена из другой папки: ' + $exe)
         }
     } else {
         [void]$issues.Add('Служба zapret не установлена.')
@@ -253,12 +293,17 @@ function Show-ZDiagnose {
     if (Test-Path $hostsPath) {
         $zero = @(Select-String -LiteralPath $hostsPath -Pattern '^\s*0\.0\.0\.0' -ErrorAction SilentlyContinue)
         if ($zero.Count -gt 0) {
-            Write-Host ("  hosts         : {0} записей 0.0.0.0 (блокировка доменов)" -f $zero.Count) -ForegroundColor Yellow
-            $ggc = @($zero | Where-Object { $_.Line -match 'googlevideo|youtube|ytimg' }).Count
-            if ($ggc -gt 0) {
-                [void]$issues.Add(('В hosts {0} записей 0.0.0.0 для YouTube/googlevideo — именно из-за них видео не грузится. Исправление: Zapret.bat fix-hosts' -f $ggc))
-            } else {
-                [void]$issues.Add('В hosts есть записи 0.0.0.0 — проверьте, не блокируют ли они нужные домены (Zapret.bat fix-hosts чинит записи YouTube).')
+            $managed = @($zero | Where-Object { $_.Line -match 'zapret-ultimate dead ggc' })
+            $foreign = @($zero | Where-Object { $_.Line -notmatch 'zapret-ultimate dead ggc' })
+            Write-Host ("  hosts         : {0} записей 0.0.0.0 (управляемых GGC: {1}, прочих: {2})" -f $zero.Count, $managed.Count, $foreign.Count) -ForegroundColor $(if ($foreign.Count -gt 0) { 'Yellow' } else { 'Green' })
+            if ($managed.Count -gt 0) {
+                Write-Host ("    {0} из них — сознательные блокировки мёртвых GGC-узлов (это норма; снять: Zapret.bat ggc-reset)" -f $managed.Count) -ForegroundColor DarkGray
+            }
+            $foreignYt = @($foreign | Where-Object { $_.Line -match 'googlevideo|youtube|ytimg' }).Count
+            if ($foreignYt -gt 0) {
+                [void]$issues.Add(('В hosts {0} посторонних записей 0.0.0.0 для YouTube/googlevideo — из-за них видео может не грузиться. Исправление: Zapret.bat fix-hosts' -f $foreignYt))
+            } elseif ($foreign.Count -gt 0) {
+                [void]$issues.Add('В hosts есть чужие записи 0.0.0.0 — проверьте, не блокируют ли они нужные домены (Zapret.bat fix-hosts).')
             }
         }
     }
@@ -374,6 +419,19 @@ function Initialize-ZGgcWatchList {
     $list | Set-Content -LiteralPath $script:ZGgcWatchFile -Encoding UTF8
 }
 
+function Add-ZGgcWatchHosts {
+    param([string[]]$Hosts)
+    Initialize-ZGgcWatchList
+    $cands = @($Hosts | Where-Object { $_ -and $_.Trim() -ne '' } | Select-Object -Unique)
+    if ($cands.Count -eq 0) { return }
+    $known = @(Get-Content -LiteralPath $script:ZGgcWatchFile -Encoding UTF8 -ErrorAction SilentlyContinue)
+    $new = @($cands | Where-Object { $known -notcontains $_ })
+    if ($new.Count -gt 0) {
+        Add-Content -LiteralPath $script:ZGgcWatchFile -Value $new -Encoding UTF8
+        Write-ZLog ('В список наблюдения GGC добавлено узлов: {0}.' -f $new.Count) DEBUG
+    }
+}
+
 # Checks every host from state\ggc-watch.txt and blocks the dead ones in hosts.
 # This is how "video hangs on a dead GGC node" is fixed without touching the
 # working nodes (blocking the whole cluster broke playback for other videos).
@@ -385,11 +443,8 @@ function Invoke-ZGgcCheck {
     Assert-ZAdmin
     Initialize-ZGgcWatchList
     if ($Hosts -and $Hosts.Count -gt 0) {
+        Add-ZGgcWatchHosts -Hosts $Hosts
         $cands = @($Hosts | Where-Object { $_ -and $_.Trim() -ne '' } | Select-Object -Unique)
-        # Remember every node we ever tested, so the periodic check covers it.
-        $known = @(Get-Content -LiteralPath $script:ZGgcWatchFile -Encoding UTF8 -ErrorAction SilentlyContinue)
-        $new = @($cands | Where-Object { $known -notcontains $_ })
-        if ($new.Count -gt 0) { Add-Content -LiteralPath $script:ZGgcWatchFile -Value $new -Encoding UTF8 }
     } else {
         $cands = @(Get-Content -LiteralPath $script:ZGgcWatchFile -Encoding UTF8 | Where-Object { $_.Trim() -ne '' })
     }
@@ -407,11 +462,30 @@ function Invoke-ZGgcCheck {
         if (-not $Quiet) { Write-Host '  Все известные мёртвые узлы уже заблокированы.' -ForegroundColor Green }
         return
     }
+    # When the uplink itself is down every node fails the check. Without this
+    # guard a single network hiccup would block every node for good.
+    if (-not (Test-ZInternetAccess)) {
+        Write-ZLog 'Нет доступа в интернет — проверка GGC-узлов пропущена (иначе все узлы выглядели бы мёртвыми).' WARN
+        if (-not $Quiet) { Write-Host '  Нет интернета — проверка узлов отменена, hosts не изменён.' -ForegroundColor Yellow }
+        return
+    }
     if (-not $Quiet) { Write-Host ("  Проверяю {0} узлов GGC..." -f $cands.Count) -ForegroundColor DarkGray }
     $dead = @()
     foreach ($h in $cands) {
-        $code = (& curl.exe -s -o NUL -w '%{http_code}' --max-time 4 "https://$h/generate_204" 2>$null) -join ''
-        if ($code -notmatch '^(2|3)\d\d$') { $dead += $h }
+        $alive = $false
+        for ($attempt = 1; $attempt -le 2 -and -not $alive; $attempt++) {
+            $code = (& curl.exe -s -o NUL -w '%{http_code}' --max-time 4 "https://$h/generate_204" 2>$null) -join ''
+            if ($code -match '^(2|3)\d\d$') { $alive = $true }
+            elseif ($attempt -eq 1) { Start-Sleep -Milliseconds 500 }
+        }
+        if (-not $alive) { $dead += $h }
+    }
+    if ($dead.Count -gt 1 -and $dead.Count -eq $cands.Count) {
+        # Every single node "dead" at once is a network/DPI-wide event, not a
+        # per-node failure. Blocking all of them is exactly what broke playback.
+        Write-ZLog ("Все {0} узлов не ответили — похоже на сетевую проблему, блокировка не применена." -f $cands.Count) ERROR
+        if (-not $Quiet) { Write-Host ("  Все {0} узлов не ответили одновременно — это похоже на проблему сети, а не на мёртвые узлы. hosts не изменён." -f $cands.Count) -ForegroundColor Red }
+        return
     }
     if ($dead.Count -eq 0) {
         if (-not $Quiet) { Write-Host '  Мёртвых узлов не найдено.' -ForegroundColor Green }
@@ -445,6 +519,26 @@ function Invoke-ZGgcCheck {
     }
 }
 
+function Reset-ZGgcHosts {
+    Assert-ZAdmin
+    $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $backup = Join-Path $ZState ('hosts-ggc-reset-' + $stamp + '.txt')
+    Copy-Item -LiteralPath $hosts -Destination $backup -Force
+    $lines = Get-Content -LiteralPath $hosts -Encoding Default
+    $out = New-Object System.Collections.ArrayList
+    $removed = 0
+    foreach ($line in $lines) {
+        if ($line -match 'zapret-ultimate dead ggc') { $removed++; continue }
+        [void]$out.Add($line)
+    }
+    [IO.File]::WriteAllLines($hosts, $out, [Text.Encoding]::Default)
+    & ipconfig.exe /flushdns | Out-Null
+    Write-ZLog ('Снято GGC-блокировок: {0}. Бэкап: {1}' -f $removed, $backup) OK
+    Write-Host ('  Снято блокировок GGC: {0}' -f $removed) -ForegroundColor Green
+    Write-Host '  Полностью перезапустите браузер.' -ForegroundColor Yellow
+}
+
 function Repair-ZHosts {
     Show-ZHeader 'ИСПРАВЛЕНИЕ HOSTS'
     Assert-ZAdmin
@@ -459,10 +553,13 @@ function Repair-ZHosts {
     $out = New-Object System.Collections.ArrayList
     $removed = 0
     foreach ($line in $lines) {
+        # Keep our own managed dead-GGC blocks: fix-hosts is for stale/foreign
+        # YouTube entries, not for undoing ggc-check. Use ggc-reset to clear them.
+        if ($line -match 'zapret-ultimate dead ggc') { [void]$out.Add($line); continue }
         # A stale "YouTube GGC fix" maps CDN nodes to 0.0.0.0. YouTube then
         # picks exactly those nodes for some videos and playback never starts.
         if ($line -match '^\s*0\.0\.0\.0\s+\S*(googlevideo|youtube|ytimg|ggpht)\.') { $removed++; continue }
-        if ($line -match 'YouTube GGC fix|fix_youtube_hosts|zapret-ultimate dead ggc') { $removed++; continue }
+        if ($line -match 'YouTube GGC fix|fix_youtube_hosts') { $removed++; continue }
         [void]$out.Add($line)
     }
     if ($removed -eq 0) {
@@ -481,6 +578,64 @@ function Repair-ZHosts {
     Write-Host ('  Удалено записей: {0}' -f $removed) -ForegroundColor Green
     Write-Host ('  Резервная копия: {0}' -f $backup) -ForegroundColor DarkGray
     Write-Host '  Перезапустите браузер, чтобы он сбросил свой DNS-кэш.' -ForegroundColor Yellow
+}
+
+# ---------------------------------------------------------- system hygiene --
+# Any scheduled task that starts zapret from another folder can bring up a
+# second winws at boot and overwrite our service, so it is reported and can be
+# disabled from here.
+function Get-ZLegacyTasks {
+    param([string]$Exclude = 'ZapretUltimate Watchdog')
+    $list = @()
+    foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue)) {
+        if (-not $t -or $t.TaskName -eq $Exclude) { continue }
+        foreach ($a in @($t.Actions)) {
+            if (-not $a -or -not $a.Execute) { continue }
+            if ($a.Execute -match 'zapret|winws' -and $a.Execute -notlike ("*" + $ZRoot + "*")) {
+                $list += [pscustomobject]@{ Name = $t.TaskName; Path = $t.TaskPath; Execute = $a.Execute; State = [string]$t.State }
+            }
+        }
+    }
+    return $list
+}
+
+function Invoke-ZFixAcl {
+    Show-ZHeader 'ПРАВА НА ПАПКУ'
+    Assert-ZAdmin
+    $weak = @(Get-ZAclWeakAces -Path $ZRoot)
+    if ($weak.Count -eq 0) {
+        Write-Host '  Права уже ограничены.' -ForegroundColor Green
+        return
+    }
+    $weakText = @($weak | ForEach-Object { $_.Identity + ' (' + $_.Rights + ')' } | Select-Object -Unique) -join ', '
+    Write-Host ('  Сейчас папка доступна на запись: ' + $weakText) -ForegroundColor Yellow
+    Set-ZRootAcl -Path $ZRoot
+    Write-Host '  Готово: запись — Administrators и SYSTEM, чтение — Users.' -ForegroundColor Green
+}
+
+function Disable-ZLegacyTasks {
+    Show-ZHeader 'ЧУЖИЕ ЗАДАЧИ ZAPRET'
+    Assert-ZAdmin
+    $list = @(Get-ZLegacyTasks)
+    if ($list.Count -eq 0) { Write-Host '  Чужих задач не найдено.' -ForegroundColor Green; return }
+    foreach ($l in $list) {
+        Write-Host ('  {0} [{1}]' -f $l.Name, $l.State) -ForegroundColor Yellow
+        Write-Host ('    ' + $l.Execute) -ForegroundColor DarkGray
+    }
+    if (-not $Yes) {
+        $a = Read-Host '  Отключить эти задачи? (y/N)'
+        if ($a -notmatch '^[yY]') { Write-Host '  Отменено.'; return }
+    }
+    foreach ($l in $list) {
+        $ref = if ($l.Path -and $l.Path -ne '\') { $l.Path.TrimEnd('\') + '\' + $l.Name } else { $l.Name }
+        & schtasks.exe /Change /TN $ref /DISABLE | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host ('  Отключена: ' + $ref) -ForegroundColor Green
+            Write-ZLog ('Отключена чужая задача ' + $ref + ' (' + $l.Execute + ')') WARN
+        } else {
+            Write-Host ('  Не удалось отключить: ' + $ref) -ForegroundColor Red
+        }
+    }
 }
 
 function Show-ZMenu {
@@ -508,6 +663,9 @@ function Show-ZMenu {
         Write-Host '  14. Отключить QUIC (Brave/Chrome/Edge)'
         Write-Host '  15. Включить QUIC обратно'
         Write-Host '  16. Проверить и заблокировать мёртвые GGC-узлы'
+        Write-Host '  17. Снять блокировки GGC (вернуть все узлы)'
+        Write-Host '  18. Исправить права на папку (закрыть дыру в ACL)'
+        Write-Host '  19. Отключить чужие задачи zapret'
         Write-Host '   0. Выход'
         Write-Host ''
         $c = Read-Host '  Выбор'
@@ -556,6 +714,10 @@ function Show-ZMenu {
                 } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
                 Read-ZPause
             }
+            '17' {
+                try { Reset-ZGgcHosts } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
+                Read-ZPause
+            }
             '16' {
                 try { Invoke-ZGgcCheck } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
                 Read-ZPause
@@ -565,6 +727,14 @@ function Show-ZMenu {
                     Set-ZQuicPolicy
                     Write-Host '  QUIC снова включён. Перезапустите браузер.' -ForegroundColor Green
                 } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
+                Read-ZPause
+            }
+            '18' {
+                try { Invoke-ZFixAcl } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
+                Read-ZPause
+            }
+            '19' {
+                try { Disable-ZLegacyTasks } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
                 Read-ZPause
             }
             '0' { return }
@@ -600,6 +770,9 @@ try {
             Write-Host 'QUIC отключён для Brave/Chrome/Edge. Полностью закройте и откройте браузер.' -ForegroundColor Green
         }
         'ggc-check' { Invoke-ZGgcCheck }
+        'ggc-reset' { Reset-ZGgcHosts }
+        'fix-acl' { Invoke-ZFixAcl }
+        'disable-legacy' { Disable-ZLegacyTasks }
         'quic-on' {
             Set-ZQuicPolicy
             Write-Host 'QUIC снова включён. Перезапустите браузер.' -ForegroundColor Green
@@ -607,7 +780,7 @@ try {
         'uninstall' { Invoke-ZUninstall }
         'menu' { Show-ZMenu }
         default {
-            Write-Host 'Команды: status, start, stop, restart, tune, quick, apply <id>, list, test, diagnose, fix-hosts, quic-off, quic-on, ggc-check, restore, uninstall, menu'
+            Write-Host 'Команды: status, start, stop, restart, tune, quick, apply <id>, list, test, diagnose, fix-hosts, quic-off, quic-on, ggc-check, ggc-reset, fix-acl, disable-legacy, restore, uninstall, menu'
         }
     }
 } catch {
