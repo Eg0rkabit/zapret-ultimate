@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 #  Zapret Ultimate - probe engine
 #  Real TLS 1.2 / TLS 1.3 handshakes with SNI + optional HTTP request.
 #  Certificate validation is intentionally ignored: we measure DPI behaviour,
@@ -53,6 +53,7 @@ function Test-ZTlsHttp {
     )
     $res = [ordered]@{
         host = $HostName; proto = $Proto; ok = $false; http = 0; ms = 0; err = ''; negotiated = ''
+        handshake = $false; via = ''
     }
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $client = New-Object Net.Sockets.TcpClient
@@ -80,6 +81,8 @@ function Test-ZTlsHttp {
         $ssl.EndAuthenticateAsClient($ar)
         $res.ok = $ssl.IsAuthenticated
         $res.negotiated = $ssl.SslProtocol.ToString()
+        $res.handshake = [bool]$res.ok
+        $res.via = 'tls'
 
         if ($res.ok -and $Http) {
             $req = "GET / HTTP/1.1`r`nHost: $HostName`r`nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) ZapretProbe/1.0`r`nAccept: */*`r`nConnection: close`r`n`r`n"
@@ -107,6 +110,8 @@ function Test-ZTlsHttp {
                 $res.ok = $true
                 $res.http = [int]$code
                 $res.negotiated = 'curl'
+                $res.handshake = $false
+                $res.via = 'curl'
                 $res.err = ''
             }
         } catch { }
@@ -116,6 +121,20 @@ function Test-ZTlsHttp {
         try { $client.Close() } catch { }
     }
     return [pscustomobject]$res
+}
+
+# Global connectivity check. When the whole uplink is down every GGC node looks
+# dead, and blocking all of them would break YouTube for good, so the GGC check
+# refuses to act without this.
+function Test-ZInternetAccess {
+    param([int]$TimeoutSec = 5)
+    foreach ($u in @('https://www.google.com/generate_204', 'https://ya.ru/')) {
+        try {
+            $code = (& curl.exe -s -o NUL -w '%{http_code}' --max-time $TimeoutSec $u 2>$null) -join ''
+            if ($code -match '^\d{3}$') { return $true }
+        } catch { }
+    }
+    return (Test-ZPortTcp -HostName '1.1.1.1' -Port 443 -TimeoutMs 3000)
 }
 
 # Runs the full matrix. TLS1.2 for every target, TLS1.3 for every target,
@@ -158,11 +177,14 @@ function Get-ZProbeScore {
     $byKey = @{}
     foreach ($r in $Results) {
         if (-not $byKey.ContainsKey($r.key)) {
-            $byKey[$r.key] = [ordered]@{ key = $r.key; cat = $r.cat; weight = $r.weight; t12 = $false; t13 = $false; http = 0; ms = 0; host = $r.host }
+            $byKey[$r.key] = [ordered]@{ key = $r.key; cat = $r.cat; weight = $r.weight; t12 = $false; t13 = $false; h12 = $false; h13 = $false; via = ''; http = 0; ms = 0; host = $r.host }
         }
         $e = $byKey[$r.key]
         if ($r.proto -eq 'TLS1.2' -and $r.ok) { $e.t12 = $true }
         if ($r.proto -eq 'TLS1.3' -and $r.ok) { $e.t13 = $true }
+        if ($r.proto -eq 'TLS1.2' -and $r.handshake -eq $true) { $e.h12 = $true }
+        if ($r.proto -eq 'TLS1.3' -and $r.handshake -eq $true) { $e.h13 = $true }
+        if ($r.via) { $e.via = [string]$r.via }
         if ($r.http -gt 0) { $e.http = $r.http }
         if ($r.ms -gt 0) { $e.ms = [math]::Max($e.ms, $r.ms) }
     }
