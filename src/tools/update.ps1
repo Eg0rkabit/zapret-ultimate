@@ -100,11 +100,20 @@ $tmp = Join-Path $env:TEMP ('zapret-update-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 try {
     Write-U 'Скачиваю файлы с GitHub...'
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
     foreach ($rel in $updateFiles) {
         $uri = [Uri]::EscapeUriString($rawBase + '/' + $rel.Replace('\', '/'))
         $dst = Join-Path $tmp $rel
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
-        Invoke-WebRequest -Uri $uri -OutFile $dst -UseBasicParsing -TimeoutSec 60
+        if ($curl) {
+            # curl is much faster and more reliable than Invoke-WebRequest here.
+            & curl.exe -fsSL --retry 2 --retry-delay 1 --max-time 60 -o $dst $uri 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $dst) -or (Get-Item -LiteralPath $dst).Length -eq 0) {
+                throw ('Не удалось скачать ' + $rel + ' (curl ' + $LASTEXITCODE + ')')
+            }
+        } else {
+            Invoke-WebRequest -Uri $uri -OutFile $dst -UseBasicParsing -TimeoutSec 60
+        }
     }
     $got = @(Get-ChildItem -LiteralPath $tmp -Recurse -File)
     if ($got.Count -lt ($updateFiles.Count - 1)) { throw ('Скачано только {0} из {1} файлов' -f $got.Count, $updateFiles.Count) }
