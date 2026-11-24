@@ -38,9 +38,13 @@ and the 5-minute watchdog, and hardens the folder ACL.
   blocks it. Intervals live in `config/settings.json`.
 * **QUIC toggle** — quic-off / quic-on for Brave/Chrome/Edge (HTTP/3 sometimes stalls where TCP works).
 * **Diagnostics** — TLS 1.2/1.3 probes (a curl fallback is shown explicitly),
+  per-video CDN node check (check-video),
   HTTP, YouTube throughput, "volume freeze" test against `googlevideo`,
   hosts-file check, folder ACL check, foreign-task check,
   IPv6/conflicts/DNS.
+* **Self-update** — update downloads the release from GitHub over HTTPS,
+  verifies that the new main script parses, backs up the current package and
+  re-applies the profile; the watchdog checks once a week (utoUpdateDays).
 * **Safe GGC blocking** — dead `googlevideo` nodes are blocked one by one; the
   check refuses to act when the whole network looks down and never blocks every
   node at once. A node that comes back to life is unblocked automatically
@@ -62,6 +66,9 @@ Zapret.bat fix-hosts  :: remove foreign 0.0.0.0 googlevideo entries
 Zapret.bat ggc-check  :: find and block dead GGC nodes
 Zapret.bat ggc-reset  :: unblock all managed GGC entries
 Zapret.bat playback   :: check 4 different videos (node-specific stalls)
+Zapret.bat check-video <url> :: check a specific video and its CDN nodes
+Zapret.bat update    :: update from GitHub
+Zapret.bat update-check :: only check whether an update exists
 Zapret.bat quic-off    :: disable HTTP/3 in Brave/Chrome/Edge
 Zapret.bat quic-on     :: re-enable HTTP/3
 Zapret.bat fix-acl    :: restrict write access to C:\Zapret
@@ -97,6 +104,7 @@ VLESS+REALITY+XHTTP, TG WS Proxy). Targeted IP bans are also out of scope.
   installer verifies the result and reports a failure loudly; `Zapret.bat diagnose`
   shows the current state and `Zapret.bat fix-acl` repairs it (e.g. after the
   folder was recreated by a manual copy).
+* `update` validates the downloaded package (syntax check), keeps a backup in `state/update-backup-*` and applies the profile only after the copy succeeds.
 * `restore` brings back the original service command line, start type and display
   name; `state/service-backup.json` keeps the backup.
 * TCP timestamps are enabled only if they were disabled, and reverted on uninstall.
