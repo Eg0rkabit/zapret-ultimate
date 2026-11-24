@@ -29,7 +29,7 @@ function Write-U {
 function Get-ZRemoteVersion {
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
     try {
-        $v = (Invoke-WebRequest -Uri $versionUrl -UseBasicParsing -TimeoutSec 15).Content.Trim()
+        $v = (Invoke-WebRequest -Uri $versionUrl -UseBasicParsing -TimeoutSec 15).Content.Trim().TrimStart([char]0xFEFF)
         if ($v -match '^\d+\.\d+\.\d+$') { return $v }
     } catch { }
     return $null
@@ -40,7 +40,7 @@ if (-not $Check) { Assert-ZAdmin }
 $local = '0.0.0'
 $versionFile = Join-Path $root 'version.txt'
 if (Test-Path -LiteralPath $versionFile) {
-    $v = (Get-Content -LiteralPath $versionFile -Raw -ErrorAction SilentlyContinue).Trim()
+    $v = (Get-Content -LiteralPath $versionFile -Raw -ErrorAction SilentlyContinue).Trim().TrimStart([char]0xFEFF)
     if ($v -match '^\d+\.\d+\.\d+$') { $local = $v }
 }
 Write-U ("Текущая версия: {0}" -f $local)
