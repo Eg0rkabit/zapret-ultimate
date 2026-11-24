@@ -59,8 +59,28 @@ function Write-U {
     try { Add-Content -LiteralPath $updateLog -Value ('{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message) -Encoding UTF8 } catch { }
 }
 
+# GitHub's raw CDN can serve a stale file for a while after a fresh publish,
+# so the authoritative Contents API is used first; raw is only a fallback.
+function Get-ZGitHubBytes {
+    param([string]$RelPath, [int]$TimeoutSec = 60)
+    $uri = 'https://api.github.com/repos/' + $repo + '/contents/src/' + ($RelPath.Replace('\', '/')) + '?ref=main'
+    $json = (& curl.exe -fsSL --retry 2 --retry-delay 1 --max-time $TimeoutSec -H 'User-Agent: ZapretUltimate' $uri 2>$null) -join "`n"
+    if ($LASTEXITCODE -eq 0 -and $json) {
+        try {
+            $o = $json | ConvertFrom-Json
+            if ($o.content) { return [Convert]::FromBase64String(($o.content -replace '\s', '')) }
+        } catch { }
+    }
+    return $null
+}
+
 function Get-ZRemoteVersion {
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
+    $bytes = Get-ZGitHubBytes -RelPath 'version.txt'
+    if ($bytes) {
+        $v = [Text.Encoding]::UTF8.GetString($bytes).Trim().TrimStart([char]0xFEFF)
+        if ($v -match '^\d+\.\d+\.\d+$') { return $v }
+    }
     try {
         $v = (Invoke-WebRequest -Uri ($rawBase + '/version.txt') -UseBasicParsing -TimeoutSec 20).Content.Trim().TrimStart([char]0xFEFF)
         if ($v -match '^\d+\.\d+\.\d+$') { return $v }
@@ -100,19 +120,19 @@ $tmp = Join-Path $env:TEMP ('zapret-update-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 try {
     Write-U 'Скачиваю файлы с GitHub...'
-    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
     foreach ($rel in $updateFiles) {
-        $uri = [Uri]::EscapeUriString($rawBase + '/' + $rel.Replace('\', '/'))
         $dst = Join-Path $tmp $rel
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
-        if ($curl) {
-            # curl is much faster and more reliable than Invoke-WebRequest here.
+        $bytes = Get-ZGitHubBytes -RelPath $rel
+        if ($bytes -and $bytes.Length -gt 0) {
+            [IO.File]::WriteAllBytes($dst, $bytes)
+        } else {
+            # Fallback: raw CDN, which may lag behind the API after a publish.
+            $uri = [Uri]::EscapeUriString($rawBase + '/' + $rel.Replace('\', '/'))
             & curl.exe -fsSL --retry 2 --retry-delay 1 --max-time 60 -o $dst $uri 2>$null
             if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $dst) -or (Get-Item -LiteralPath $dst).Length -eq 0) {
-                throw ('Не удалось скачать ' + $rel + ' (curl ' + $LASTEXITCODE + ')')
+                throw ('Не удалось скачать ' + $rel)
             }
-        } else {
-            Invoke-WebRequest -Uri $uri -OutFile $dst -UseBasicParsing -TimeoutSec 60
         }
     }
     $got = @(Get-ChildItem -LiteralPath $tmp -Recurse -File)
