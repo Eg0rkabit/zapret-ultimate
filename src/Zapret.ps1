@@ -1,7 +1,7 @@
 ﻿# ============================================================================
 #  Zapret Ultimate - CLI entry point
 #  Usage: Zapret.ps1 [status|start|stop|restart|tune|quick|apply|list|test|
-#                     diagnose|fix-hosts|quic-off|quic-on|ggc-check|ggc-reset|playback|
+#                     diagnose|fix-hosts|quic-off|quic-on|ggc-check|ggc-reset|playback|check-video|update|
 #                     fix-acl|disable-legacy|restore|uninstall|menu]
 # ============================================================================
 param(
@@ -279,6 +279,66 @@ function Show-ZPlayback {
     Write-Host ('  Итого: играют {0} из {1}.' -f $okCount, $available) -ForegroundColor $col
     if ($okCount -lt $available) {
         Write-Host '  Если узлы ролика недоступны на уровне IP — это ограничение провайдера, а не профиля zapret.' -ForegroundColor Yellow
+    }
+}
+
+function Get-ZVideoId {
+    param([string]$Value)
+    if (-not $Value) { return $null }
+    if ($Value -match '(?:v=|youtu\.be/|embed/|shorts/)([A-Za-z0-9_-]{11})') { return $Matches[1] }
+    if ($Value -match '^[A-Za-z0-9_-]{11}$') { return $Value }
+    return $null
+}
+
+# Answers the only question that matters for a specific video: are its CDN
+# nodes reachable at all? If every node is blackholed, no DPI bypass helps.
+function Show-ZVideoCheck {
+    param([string]$Url = '')
+    Show-ZHeader 'ПРОВЕРКА ВИДЕО'
+    if (-not $Url) { $Url = Read-Host '  Ссылка на видео (или id)' }
+    $id = Get-ZVideoId -Value $Url
+    if (-not $id) { Write-Host '  Не удалось распознать id видео.' -ForegroundColor Red; return }
+    $watch = 'https://www.youtube.com/watch?v=' + $id
+    Write-Host ('  Видео: ' + $watch) -ForegroundColor DarkGray
+
+    $ytdlp = Join-Path $ZTools 'yt-dlp.exe'
+    if (Test-Path -LiteralPath $ytdlp) {
+        $out = & $ytdlp --no-warnings --no-playlist -f 'bv*[height<=720]/b[height<=720]' -g $watch 2>&1
+        $streams = @($out | Where-Object { $_ -like 'http*' })
+        if ($streams.Count -eq 0) {
+            Write-Host '  yt-dlp не смог получить поток (антибот/ограничение).' -ForegroundColor Yellow
+        } else {
+            $videoHosts = @($streams | ForEach-Object { ([Uri]$_).Host } | Select-Object -Unique)
+            $alive = 0; $dead = 0
+            foreach ($vh in $videoHosts) {
+                if (Test-ZHostReachable -HostName $vh) {
+                    $alive++
+                    Write-Host ('  OK   ' + $vh) -ForegroundColor Green
+                } else {
+                    $dead++
+                    Write-Host ('  DEAD ' + $vh) -ForegroundColor Red
+                }
+            }
+            if ($alive -eq 0) {
+                Write-Host '  Все узлы этого видео недоступны: провайдер выбрасывает TLS к их IP. zapret это не обходит — нужен VPN/транспорт.' -ForegroundColor Red
+                return
+            }
+            Write-Host ('  Живых узлов: {0}, мёртвых: {1}.' -f $alive, $dead) -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host '  yt-dlp нет (Lite-версия) — проверяю только браузером.' -ForegroundColor Yellow
+    }
+
+    Write-Host '  Проверяю воспроизведение...' -ForegroundColor DarkGray
+    $r = Test-ZBrowserPlayback -Url $watch -WaitSec 18 -TimeoutSec 75
+    if ($r -and $r.available) {
+        if ($r.ok) {
+            Write-Host ('  Играет: {0:N1} c, буфер {1:N0} c, узел {2}' -f $r.currentTime, $r.bufferedEnd, $r.ggcHost) -ForegroundColor Green
+        } else {
+            Write-Host ('  Не играет: ' + $r.reason) -ForegroundColor Red
+        }
+    } else {
+        Write-Host '  Браузер для проверки не найден.' -ForegroundColor Yellow
     }
 }
 
@@ -796,6 +856,8 @@ function Show-ZMenu {
         Write-Host '  18. Исправить права на папку (закрыть дыру в ACL)'
         Write-Host '  19. Отключить чужие задачи zapret'
         Write-Host '  20. Проверка нескольких видео (4 ролика)'
+        Write-Host '  21. Проверить видео по ссылке'
+        Write-Host '  22. Обновление из GitHub'
         Write-Host '   0. Выход'
         Write-Host ''
         $c = Read-Host '  Выбор'
@@ -871,6 +933,14 @@ function Show-ZMenu {
                 try { Show-ZPlayback } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
                 Read-ZPause
             }
+            '21' {
+                try { Show-ZVideoCheck } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
+                Read-ZPause
+            }
+            '22' {
+                try { & "$root\tools\update.ps1" } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
+                Read-ZPause
+            }
             '0' { return }
             default { }
         }
@@ -906,6 +976,9 @@ try {
         'ggc-check' { Invoke-ZGgcCheck }
         'ggc-reset' { Reset-ZGgcHosts }
         'playback' { Show-ZPlayback }
+        'check-video' { Show-ZVideoCheck -Url $ProfileId }
+        'update' { & "$root\tools\update.ps1" }
+        'update-check' { & "$root\tools\update.ps1" -Check }
         'fix-acl' { Invoke-ZFixAcl }
         'disable-legacy' { Disable-ZLegacyTasks }
         'quic-on' {
@@ -915,7 +988,7 @@ try {
         'uninstall' { Invoke-ZUninstall }
         'menu' { Show-ZMenu }
         default {
-            Write-Host 'Команды: status, start, stop, restart, tune, quick, apply <id>, list, test, diagnose, fix-hosts, quic-off, quic-on, ggc-check, ggc-reset, playback, fix-acl, disable-legacy, restore, uninstall, menu'
+            Write-Host 'Команды: status, start, stop, restart, tune, quick, apply <id>, list, test, diagnose, fix-hosts, quic-off, quic-on, ggc-check, ggc-reset, playback, check-video, update, update-check, fix-acl, disable-legacy, restore, uninstall, menu'
         }
     }
 } catch {
