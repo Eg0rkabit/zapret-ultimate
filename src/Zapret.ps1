@@ -1,7 +1,7 @@
 ﻿# ============================================================================
 #  Zapret Ultimate - CLI entry point
 #  Usage: Zapret.ps1 [status|start|stop|restart|tune|quick|apply|list|test|
-#                     diagnose|fix-hosts|quic-off|quic-on|ggc-check|ggc-reset|
+#                     diagnose|fix-hosts|quic-off|quic-on|ggc-check|ggc-reset|playback|
 #                     fix-acl|disable-legacy|restore|uninstall|menu]
 # ============================================================================
 param(
@@ -22,7 +22,8 @@ $root = $PSScriptRoot
 $script:ZQuicPolicyKeys = @(
     'HKLM:\SOFTWARE\Policies\Google\Chrome',
     'HKLM:\SOFTWARE\Policies\Microsoft\Edge',
-    'HKLM:\SOFTWARE\Policies\BraveSoftware\Brave'
+    'HKLM:\SOFTWARE\Policies\BraveSoftware\Brave',
+    'HKLM:\SOFTWARE\Policies\YandexBrowser'
 )
 
 # Fix the raster "Terminal" font problem (no Cyrillic glyphs) before any output.
@@ -202,7 +203,7 @@ function Show-ZTest {
     }
     $rep.bulk = $bulk
 
-    Write-Host '  Проверка реального воспроизведения (Brave/Chrome/Edge)...' -ForegroundColor DarkGray
+    Write-Host '  Проверка реального воспроизведения (Chrome/Edge/Brave/Yandex)...' -ForegroundColor DarkGray
     $play = Test-ZBrowserPlayback
     if ($play -and $play.available) {
         if ($play.ok) {
@@ -216,7 +217,7 @@ function Show-ZTest {
             if (@($play.hosts).Count -gt 0) {
                 Write-Host '  Проверяю узлы, которые выбрал браузер, и блокирую мёртвые...' -ForegroundColor DarkGray
                 try {
-                    Invoke-ZGgcCheck -Hosts @($play.hosts) -Quiet
+                    Invoke-ZGgcCheck -Hosts @($play.hosts) -Quiet -SkipRestore
                     $play2 = Test-ZBrowserPlayback
                     if ($play2.ok) {
                         Write-Host ('  После блокировки мёртвого узла видео играет: {0:N1} c, буфер {1:N0} c' -f $play2.currentTime, $play2.bufferedEnd) -ForegroundColor Green
@@ -237,6 +238,48 @@ function Show-ZTest {
     $out = Join-Path $ZLogs ('report-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
     ($rep | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $out -Encoding UTF8
     Write-Host ('  Отчёт сохранён: ' + $out) -ForegroundColor DarkGray
+}
+
+# One video can work while another hangs on a dead GGC node. This checks a few
+# different videos, which is how node-specific stalls are found.
+function Show-ZPlayback {
+    param([int]$Count = 4)
+    Show-ZHeader 'ПРОВЕРКА НЕСКОЛЬКИХ ВИДЕО'
+    $ids = @('dQw4w9WgXcQ', 'jNQXAC9IVRw', '9bZkp7q19f0', 'kJQP7kiw5Fk')
+    $take = [math]::Max(1, [math]::Min($Count, $ids.Count))
+    $ids = @($ids | Select-Object -First $take)
+    $okCount = 0
+    $available = 0
+    foreach ($id in $ids) {
+        $u = 'https://www.youtube.com/watch?v=' + $id
+        $r = Test-ZBrowserPlayback -Url $u -WaitSec 14 -TimeoutSec 60
+        if (-not $r -or -not $r.available) {
+            Write-Host ('  n/a  {0}  {1}' -f $id, $(if ($r) { $r.reason } else { 'браузер не найден' })) -ForegroundColor Yellow
+            continue
+        }
+        $available++
+        if ($r.ok) {
+            $okCount++
+            Write-Host ('  OK   {0}  {1:N1} c, буфер {2:N0} c, {3}' -f $id, $r.currentTime, $r.bufferedEnd, $r.ggcHost) -ForegroundColor Green
+        } else {
+            Write-Host ('  FAIL {0}  {1}' -f $id, $r.reason) -ForegroundColor Red
+            $videoHosts = @($r.hosts | Where-Object { $_ })
+            if ($videoHosts.Count -gt 0) {
+                $aliveHosts = @($videoHosts | Where-Object { Test-ZHostReachable -HostName $_ })
+                if ($aliveHosts.Count -eq 0) {
+                    Write-Host ('       все {0} узла этого ролика недоступны на уровне IP (проверено через DoH) — заблокирован диапазон Google; zapret такое не обходит, нужен VPN/другой транспорт.' -f $videoHosts.Count) -ForegroundColor Yellow
+                } else {
+                    Write-Host ('       узлы ролика: живых {0}, недоступных {1}. Возможно, поможет Zapret.bat ggc-check.' -f $aliveHosts.Count, ($videoHosts.Count - $aliveHosts.Count)) -ForegroundColor Yellow
+                }
+            }
+        }
+    }
+    if ($available -eq 0) { Write-Host '  Проверить не удалось: браузер не найден.' -ForegroundColor Yellow; return }
+    $col = if ($okCount -eq $available) { 'Green' } elseif ($okCount -gt 0) { 'Yellow' } else { 'Red' }
+    Write-Host ('  Итого: играют {0} из {1}.' -f $okCount, $available) -ForegroundColor $col
+    if ($okCount -lt $available) {
+        Write-Host '  Если узлы ролика недоступны на уровне IP — это ограничение провайдера, а не профиля zapret.' -ForegroundColor Yellow
+    }
 }
 
 function Show-ZDiagnose {
@@ -314,7 +357,7 @@ function Show-ZDiagnose {
     $quicOff = $false
     try { $quicOff = Get-ZQuicPolicyState } catch { }
     if ($quicOff) {
-        Write-Host '  QUIC          : отключён политикой (Brave/Chrome/Edge ходят по TCP)' -ForegroundColor Green
+        Write-Host '  QUIC          : отключён политикой (Chrome/Edge/Brave/Yandex ходят по TCP)' -ForegroundColor Green
     } else {
         Write-Host '  QUIC          : включён (если видео YouTube встаёт — попробуйте Zapret.bat quic-off)' -ForegroundColor DarkGray
     }
@@ -432,16 +475,98 @@ function Add-ZGgcWatchHosts {
     }
 }
 
+# A blocked node that came back to life must be unblocked, otherwise YouTube
+# stays broken on that node forever. A blocked host resolves to 0.0.0.0, so the
+# real address is taken over DoH and curl connects to it with --resolve.
+function Resolve-ZDoHAddress {
+    param([string]$HostName, [int]$TimeoutSec = 5)
+    try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
+    $urls = @(
+        ('https://cloudflare-dns.com/dns-query?name={0}&type=A' -f $HostName),
+        ('https://dns.google/resolve?name={0}&type=A' -f $HostName)
+    )
+    foreach ($u in $urls) {
+        try {
+            $r = Invoke-RestMethod -Uri $u -Headers @{ Accept = 'application/dns-json' } -TimeoutSec $TimeoutSec -ErrorAction Stop
+            $a = @($r.Answer | Where-Object { $_.type -eq 1 } | ForEach-Object { [string]$_.data } |
+                    Where-Object { $_ -match '^\d{1,3}(\.\d{1,3}){3}$' })
+            if ($a.Count -gt 0) { return $a[0] }
+        } catch { }
+    }
+    return $null
+}
+
+function Test-ZHostReachable {
+    param([string]$HostName, [int]$TimeoutSec = 4)
+    $ip = Resolve-ZDoHAddress -HostName $HostName
+    if (-not $ip) { return $false }
+    # --resolve ignores the hosts file, so a managed block does not hide the truth.
+    $code = (& curl.exe -s -o NUL -w '%{http_code}' --max-time $TimeoutSec --resolve "${HostName}:443:$ip" "https://$HostName/generate_204" 2>$null) -join ''
+    return ($code -match '^(2|3)\d\d$')
+}
+
+function Restore-ZAliveGgcHosts {
+    param([switch]$Quiet)
+    $hosts = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+    if (-not (Test-Path -LiteralPath $hosts)) { return }
+    $blocked = @()
+    try {
+        $blocked = @(Select-String -LiteralPath $hosts -Pattern '^\s*0\.0\.0\.0\s+(\S+).*zapret-ultimate dead ggc' -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.Matches[0].Groups[1].Value } | Where-Object { $_ } | Select-Object -Unique)
+    } catch { }
+    if ($blocked.Count -eq 0) { return }
+    if (-not (Test-ZInternetAccess)) { return }
+    $alive = @()
+    foreach ($h in $blocked) {
+        $ip = Resolve-ZDoHAddress -HostName $h
+        if (-not $ip) { continue }
+        # --resolve bypasses the hosts file, so a blocked node can be tested.
+        $code = (& curl.exe -s -o NUL -w '%{http_code}' --max-time 4 --resolve "${h}:443:$ip" "https://$h/generate_204" 2>$null) -join ''
+        if ($code -match '^(2|3)\d\d$') { $alive += $h }
+    }
+    if ($alive.Count -eq 0) {
+        Write-ZLog ('Заблокированные GGC-узлы: оживших нет (проверено {0}).' -f $blocked.Count) DEBUG
+        return
+    }
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $backup = Join-Path $ZState ('hosts-ggc-unblock-' + $stamp + '.txt')
+    Copy-Item -LiteralPath $hosts -Destination $backup -Force
+    $lines = Get-Content -LiteralPath $hosts -Encoding Default
+    $out = New-Object System.Collections.ArrayList
+    foreach ($line in $lines) {
+        $drop = $false
+        foreach ($a in $alive) {
+            if ($line -match ('^\s*0\.0\.0\.0\s+' + [regex]::Escape($a) + '\s')) { $drop = $true; break }
+        }
+        if (-not $drop) { [void]$out.Add($line) }
+    }
+    # Drop the group header too when no managed block is left.
+    if (@($out | Where-Object { $_ -match '^\s*0\.0\.0\.0.*zapret-ultimate dead ggc' }).Count -eq 0) {
+        $filtered = New-Object System.Collections.ArrayList
+        foreach ($l in $out) { if ($l -ne '# zapret-ultimate dead ggc') { [void]$filtered.Add($l) } }
+        $out = $filtered
+    }
+    [IO.File]::WriteAllLines($hosts, $out, [Text.Encoding]::Default)
+    & ipconfig.exe /flushdns | Out-Null
+    Write-ZLog ('Разблокировано оживших GGC-узлов: {0} (проверено {1}). Бэкап: {2}' -f $alive.Count, $blocked.Count, $backup) OK
+    if (-not $Quiet) {
+        Write-Host ('  Разблокировано оживших GGC-узлов: {0} ({1}).' -f $alive.Count, ($alive -join ', ')) -ForegroundColor Green
+        Write-Host '  Полностью перезапустите браузер.' -ForegroundColor Yellow
+    }
+}
+
 # Checks every host from state\ggc-watch.txt and blocks the dead ones in hosts.
 # This is how "video hangs on a dead GGC node" is fixed without touching the
 # working nodes (blocking the whole cluster broke playback for other videos).
 function Invoke-ZGgcCheck {
     param(
         [string[]]$Hosts,
-        [switch]$Quiet
+        [switch]$Quiet,
+        [switch]$SkipRestore
     )
     Assert-ZAdmin
     Initialize-ZGgcWatchList
+    if (-not $SkipRestore) { Restore-ZAliveGgcHosts -Quiet:$Quiet }
     if ($Hosts -and $Hosts.Count -gt 0) {
         Add-ZGgcWatchHosts -Hosts $Hosts
         $cands = @($Hosts | Where-Object { $_ -and $_.Trim() -ne '' } | Select-Object -Unique)
@@ -664,12 +789,13 @@ function Show-ZMenu {
         Write-Host '  11. Вернуть исходную конфигурацию'
         Write-Host '  12. Удалить службу'
         Write-Host '  13. Исправить hosts (битые GGC-записи YouTube)'
-        Write-Host '  14. Отключить QUIC (Brave/Chrome/Edge)'
+        Write-Host '  14. Отключить QUIC (Chrome/Edge/Brave/Yandex)'
         Write-Host '  15. Включить QUIC обратно'
         Write-Host '  16. Проверить и заблокировать мёртвые GGC-узлы'
         Write-Host '  17. Снять блокировки GGC (вернуть все узлы)'
         Write-Host '  18. Исправить права на папку (закрыть дыру в ACL)'
         Write-Host '  19. Отключить чужие задачи zapret'
+        Write-Host '  20. Проверка нескольких видео (4 ролика)'
         Write-Host '   0. Выход'
         Write-Host ''
         $c = Read-Host '  Выбор'
@@ -714,7 +840,7 @@ function Show-ZMenu {
             '14' {
                 try {
                     Set-ZQuicPolicy -Disable
-                    Write-Host '  QUIC отключён для Brave/Chrome/Edge. Полностью закройте и откройте браузер.' -ForegroundColor Green
+                    Write-Host '  QUIC отключён для Chrome/Edge/Brave/Yandex. Полностью закройте и откройте браузер.' -ForegroundColor Green
                 } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
                 Read-ZPause
             }
@@ -739,6 +865,10 @@ function Show-ZMenu {
             }
             '19' {
                 try { Disable-ZLegacyTasks } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
+                Read-ZPause
+            }
+            '20' {
+                try { Show-ZPlayback } catch { Write-Host ('  Ошибка: ' + $_.Exception.Message) -ForegroundColor Red }
                 Read-ZPause
             }
             '0' { return }
@@ -771,10 +901,11 @@ try {
         'fix-hosts' { Repair-ZHosts }
         'quic-off' {
             Set-ZQuicPolicy -Disable
-            Write-Host 'QUIC отключён для Brave/Chrome/Edge. Полностью закройте и откройте браузер.' -ForegroundColor Green
+            Write-Host 'QUIC отключён для Chrome/Edge/Brave/Yandex. Полностью закройте и откройте браузер.' -ForegroundColor Green
         }
         'ggc-check' { Invoke-ZGgcCheck }
         'ggc-reset' { Reset-ZGgcHosts }
+        'playback' { Show-ZPlayback }
         'fix-acl' { Invoke-ZFixAcl }
         'disable-legacy' { Disable-ZLegacyTasks }
         'quic-on' {
@@ -784,7 +915,7 @@ try {
         'uninstall' { Invoke-ZUninstall }
         'menu' { Show-ZMenu }
         default {
-            Write-Host 'Команды: status, start, stop, restart, tune, quick, apply <id>, list, test, diagnose, fix-hosts, quic-off, quic-on, ggc-check, ggc-reset, fix-acl, disable-legacy, restore, uninstall, menu'
+            Write-Host 'Команды: status, start, stop, restart, tune, quick, apply <id>, list, test, diagnose, fix-hosts, quic-off, quic-on, ggc-check, ggc-reset, playback, fix-acl, disable-legacy, restore, uninstall, menu'
         }
     }
 } catch {
