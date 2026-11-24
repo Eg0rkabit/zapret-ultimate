@@ -123,12 +123,21 @@ try {
 
 if (-not $SkipWatchdog) {
     $wd = Join-Path $dest 'tools\watchdog.ps1'
+    # The interval is configurable via config\settings.json.
+    $wdMinutes = 5
+    try {
+        $cfgPath = Join-Path $dest 'config\settings.json'
+        if (Test-Path -LiteralPath $cfgPath) {
+            $cfg = Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($cfg.watchdogMinutes -and [int]$cfg.watchdogMinutes -ge 1) { $wdMinutes = [int]$cfg.watchdogMinutes }
+        }
+    } catch { }
     $tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $wd + '"'
-    & schtasks.exe /Create /TN 'ZapretUltimate Watchdog' /TR $tr /SC MINUTE /MO 5 /RU 'SYSTEM' /RL HIGHEST /F | Out-Null
+    & schtasks.exe /Create /TN 'ZapretUltimate Watchdog' /TR $tr /SC MINUTE /MO $wdMinutes /RU 'SYSTEM' /RL HIGHEST /F | Out-Null
     if ($LASTEXITCODE -eq 0) {
         $chk = Get-ScheduledTask -TaskName 'ZapretUltimate Watchdog' -ErrorAction SilentlyContinue
-        if ($chk) { Write-I ('  Задача автопроверки создана ({0}, каждые 5 минут).' -f $chk.State) Green }
-        else { Write-I '  Задача автопроверки создана (проверить: schtasks /Query /TN "ZapretUltimate Watchdog").' Green }
+        if ($chk) { Write-I ('  Задача автопроверки создана ({0}, каждые {1} минут).' -f $chk.State, $wdMinutes) Green }
+        else { Write-I ('  Задача автопроверки создана (каждые {0} минут; проверить: schtasks /Query /TN "ZapretUltimate Watchdog").' -f $wdMinutes) Green }
     } else {
         Write-I '  Не удалось создать задачу автопроверки.' Red
     }
