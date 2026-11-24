@@ -110,8 +110,8 @@ function Stop-ZService {
     Write-ZLog "Останавливаю службу $ZServiceName (текущее состояние: $st)..." INFO
     & sc.exe stop $ZServiceName | Out-Null
     if (-not (Wait-ZServiceState -Wanted 'Stopped' -TimeoutSec 25)) {
-        Write-ZLog 'Служба не остановилась штатно, завершаю winws.exe принудительно.' WARN
-        & taskkill.exe /IM winws.exe /F 2>$null | Out-Null
+        Write-ZLog 'Служба не остановилась штатно, завершаю только свои winws.exe.' WARN
+        Stop-ZWinwsAll
         Start-Sleep -Milliseconds 700
     }
 }
@@ -133,26 +133,52 @@ function Restart-ZService {
 
 # ------------------------------------------------------------ winws procs ---
 function Get-ZWinwsProcesses {
-    # Only processes started from our own bin directory are ours. Another
-    # zapret installation must not be killed by accident.
+    # Every winws.exe on the machine. Path is empty when the caller is not
+    # allowed to read ExecutablePath (a non-elevated query of a SYSTEM process).
     $list = @()
     foreach ($p in @(Get-CimInstance Win32_Process -Filter "Name='winws.exe'" -ErrorAction SilentlyContinue)) {
-        $path = $p.ExecutablePath
-        if (-not $path -or $path -like (Join-Path $ZBin '*')) {
-            $list += [pscustomobject]@{ Id = [int]$p.ProcessId; Path = $path }
-        }
+        $list += [pscustomobject]@{ Id = [int]$p.ProcessId; Path = $p.ExecutablePath }
     }
     return $list
 }
 
+function Get-ZOwnWinwsProcesses {
+    # Only processes started from our own bin directory are ours. A process
+    # whose path cannot be read is never treated as ours: killing it could hit
+    # another zapret installation.
+    return @(Get-ZWinwsProcesses | Where-Object { $_.Path -and $_.Path -like (Join-Path $ZBin '*') })
+}
+
+function Test-ZWinwsRunning {
+    $all = @(Get-ZWinwsProcesses)
+    if ($all.Count -eq 0) { return $false }
+    if (@(Get-ZOwnWinwsProcesses).Count -gt 0) { return $true }
+    # Without elevation ExecutablePath is unreadable for SYSTEM-owned
+    # processes; a single unreadable winws is our service.
+    return ($all.Count -eq 1 -and -not $all[0].Path)
+}
+
 function Stop-ZWinwsAll {
-    $procs = @(Get-ZWinwsProcesses)
-    if ($procs.Count -eq 0) { return }
+    $all = @(Get-ZWinwsProcesses)
+    if ($all.Count -eq 0) { return }
+    $procs = @(Get-ZOwnWinwsProcesses)
+    $foreign = @($all | Where-Object { $_.Path -and $_.Path -notlike (Join-Path $ZBin '*') })
+    $unknown = @($all | Where-Object { -not $_.Path })
+    if ($foreign.Count -gt 0) {
+        Write-ZLog ('Не трогаю чужие winws.exe: {0}' -f (($foreign | ForEach-Object { $_.Path }) -join '; ')) WARN
+    }
+    if ($procs.Count -eq 0) {
+        if ($unknown.Count -gt 0) {
+            Write-ZLog ('Не могу определить путь {0} процесс(ов) winws.exe — не завершаю их.' -f $unknown.Count) WARN
+        }
+        return
+    }
     Write-ZLog "Завершаю $($procs.Count) процесс(ов) winws.exe..." DEBUG
     $procs | ForEach-Object { try { Stop-Process -Id $_.Id -Force -ErrorAction Stop } catch { } }
     Start-Sleep -Milliseconds 600
-    if (@(Get-ZWinwsProcesses).Count -gt 0) {
-        foreach ($p in Get-ZWinwsProcesses) { try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch { } }
+    $left = @(Get-ZOwnWinwsProcesses)
+    if ($left.Count -gt 0) {
+        foreach ($p in $left) { try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch { } }
         Start-Sleep -Milliseconds 600
     }
 }
@@ -160,19 +186,64 @@ function Stop-ZWinwsAll {
 # ------------------------------------------------------------- operation ---
 # A named lock serialises tuning, installation and the watchdog. Without it the
 # watchdog can start the service in the middle of a tuning pass and corrupt it.
+# File format: "PID|ISO-time|operation". The PID is checked before the lock is
+# considered alive, so a killed tune cannot block the watchdog for an hour.
+function Get-ZLockData {
+    param([string]$Name = 'operation')
+    $path = Join-Path $ZState ($Name + '.lock')
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    $raw = ''
+    try { $raw = (Get-Content -LiteralPath $path -Raw -ErrorAction Stop).Trim() } catch { }
+    $age = [double]::MaxValue
+    try { $age = ((Get-Date) - (Get-Item -LiteralPath $path).LastWriteTime).TotalMinutes } catch { }
+    $ownerPid = 0
+    $stamp = [datetime]::MinValue
+    $parts = @($raw -split '\|')
+    if ($parts.Count -ge 1) { [void][int]::TryParse($parts[0], [ref]$ownerPid) }
+    if ($parts.Count -ge 2) { [void][datetime]::TryParse($parts[1], [ref]$stamp) }
+    return [pscustomobject]@{
+        Path       = $path
+        Raw        = $raw
+        Pid        = $ownerPid
+        Stamp      = $(if ($stamp -ne [datetime]::MinValue) { $stamp } else { $null })
+        AgeMinutes = $age
+    }
+}
+
+function Test-ZLockOwnerAlive {
+    param([int]$OwnerPid)
+    if ($OwnerPid -le 0) { return $false }
+    try { return [bool](Get-Process -Id $OwnerPid -ErrorAction SilentlyContinue) } catch { return $false }
+}
+
 function Enter-ZLock {
-    param([string]$Name = 'operation', [int]$StaleMinutes = 45)
+    param([string]$Name = 'operation', [int]$StaleMinutes = 20)
     $path = Join-Path $ZState ($Name + '.lock')
     if (Test-Path -LiteralPath $path) {
-        try {
-            $age = (Get-Date) - (Get-Item -LiteralPath $path).LastWriteTime
-            if ($age.TotalMinutes -lt $StaleMinutes) { return $false }
-            Write-ZLog ("Снимаю просроченный lock {0} (возраст {1:N0} мин)." -f $Name, $age.TotalMinutes) WARN
-        } catch { }
+        $d = Get-ZLockData -Name $Name
+        $ownerAlive = ($d -and $d.Pid -gt 0 -and (Test-ZLockOwnerAlive -OwnerPid $d.Pid))
+        $freshUnknown = ($d -and $d.Pid -le 0 -and $d.AgeMinutes -lt $StaleMinutes)
+        if ($ownerAlive -or $freshUnknown) { return $false }
+        Write-ZLog ("Снимаю просроченный lock {0} (PID {1}, возраст {2:N0} мин)." -f $Name, $(if ($d) { $d.Pid } else { '?' }), $(if ($d) { $d.AgeMinutes } else { 0 })) WARN
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
     }
     $info = '{0}|{1}|{2}' -f $PID, (Get-Date).ToString('o'), $Name
-    Set-Content -LiteralPath $path -Value $info -Encoding UTF8
-    return $true
+    try {
+        # CreateNew is atomic: two concurrent processes cannot both win.
+        $fs = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($info)
+            $fs.Write($bytes, 0, $bytes.Length)
+            $fs.Flush()
+        } finally { $fs.Close() }
+        return $true
+    } catch [IO.IOException] {
+        Write-ZLog ("Lock {0} только что занял другой процесс." -f $Name) WARN
+        return $false
+    } catch {
+        Write-ZLog ("Не удалось создать lock {0}: {1}" -f $Name, $_.Exception.Message) ERROR
+        return $false
+    }
 }
 
 function Exit-ZLock {
@@ -182,13 +253,13 @@ function Exit-ZLock {
 }
 
 function Test-ZLock {
-    param([string]$Name = 'operation', [int]$StaleMinutes = 45)
-    $path = Join-Path $ZState ($Name + '.lock')
-    if (-not (Test-Path -LiteralPath $path)) { return $false }
-    try {
-        $age = (Get-Date) - (Get-Item -LiteralPath $path).LastWriteTime
-        return ($age.TotalMinutes -lt $StaleMinutes)
-    } catch { return $false }
+    param([string]$Name = 'operation', [int]$StaleMinutes = 20)
+    $d = Get-ZLockData -Name $Name
+    if ($null -eq $d) { return $false }
+    # A lock whose owner process is gone is stale immediately: every stage of
+    # tune/watchdog writes its own PID, and none of them outlives its process.
+    if ($d.Pid -gt 0) { return (Test-ZLockOwnerAlive -OwnerPid $d.Pid) }
+    return ($d.AgeMinutes -lt $StaleMinutes)
 }
 
 # ------------------------------------------------------------------ state ---
@@ -235,6 +306,74 @@ function Get-ZInstalledInfo {
 
 function Clear-ZInstalledInfo {
     Remove-Item -LiteralPath (Join-Path $ZState 'installed.json') -Force -ErrorAction SilentlyContinue
+}
+
+# ------------------------------------------------------------------- ACL ----
+# The watchdog task runs scripts from this folder as SYSTEM, so a folder that
+# ordinary users can write to is a local privilege escalation. These helpers
+# apply and verify the hardening that README promises.
+function Get-ZAclWeakAces {
+    param([string]$Path = $ZRoot)
+    $weak = @()
+    try {
+        $acl = Get-Acl -LiteralPath $Path
+        # Authenticated Users, Everyone, Users. Compare SIDs: names are localized.
+        $unprivileged = @('S-1-5-11', 'S-1-1-0', 'S-1-5-32-545')
+        # Only rights that let a user change the files. FullControl/Modify are
+        # composites that also contain read bits, so testing them directly would
+        # flag harmless read-only grants.
+        $dangerousParts = @(
+            [int64][Security.AccessControl.FileSystemRights]::Write,
+            [int64][Security.AccessControl.FileSystemRights]::Delete,
+            [int64][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles,
+            [int64][Security.AccessControl.FileSystemRights]::ChangePermissions,
+            [int64][Security.AccessControl.FileSystemRights]::TakeOwnership,
+            [int64]0x40000000,   # GENERIC_WRITE
+            [int64]0x10000000    # GENERIC_ALL
+        )
+        $dangerous = [int64]0
+        foreach ($part in $dangerousParts) { $dangerous = $dangerous -bor $part }
+        foreach ($ace in $acl.Access) {
+            if ($ace.AccessControlType -ne 'Allow') { continue }
+            $sid = $null
+            try { $sid = $ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { }
+            if (-not $sid -or ($unprivileged -notcontains $sid)) { continue }
+            if (([int64]$ace.FileSystemRights -band $dangerous) -ne 0) {
+                $weak += [pscustomobject]@{
+                    Identity  = $ace.IdentityReference.Value
+                    Sid       = $sid
+                    Rights    = $ace.FileSystemRights.ToString()
+                    Inherited = $ace.IsInherited
+                }
+            }
+        }
+    } catch { }
+    return $weak
+}
+
+function Test-ZRootAcl {
+    param([string]$Path = $ZRoot)
+    return (@(Get-ZAclWeakAces -Path $Path).Count -eq 0)
+}
+
+function Set-ZRootAcl {
+    param([string]$Path = $ZRoot)
+    Assert-ZAdmin
+    $admins = '*S-1-5-32-544:(OI)(CI)F'
+    $system = '*S-1-5-18:(OI)(CI)F'
+    $users = '*S-1-5-32-545:(OI)(CI)RX'
+    # Drop the permissive ACEs inherited from C:\ and grant only what is needed.
+    # /remove:g is best-effort: inherited entries are already gone by then.
+    & icacls.exe $Path '/inheritance:r' '/grant:r' $admins $system $users '/remove:g' '*S-1-5-11' '*S-1-1-0' | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        & icacls.exe $Path '/inheritance:r' '/grant:r' $admins $system $users | Out-Null
+    }
+    $weak = @(Get-ZAclWeakAces -Path $Path)
+    if ($weak.Count -gt 0) {
+        $summary = ($weak | ForEach-Object { $_.Identity + '=' + $_.Rights }) -join '; '
+        throw ("Права на {0} не удалось ограничить: {1}" -f $Path, $summary)
+    }
+    Write-ZLog ('Права на {0} ограничены: Administrators/SYSTEM — запись, Users — чтение.' -f $Path) OK
 }
 
 # ------------------------------------------------------------------ misc ----
