@@ -1,0 +1,5 @@
+{
+    "version": 1,
+    "watchdogMinutes": 5,
+    "ggcCheckMinutes": 30
+}
