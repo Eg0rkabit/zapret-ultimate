@@ -169,6 +169,8 @@ try {
     $chosen = $null
     $chosenSpeed = $null
     $chosenBrowser = $null
+    # Finalists that failed their checks must never become the fallback.
+    $rejected = @()
     foreach ($f in @($valid | Select-Object -First 2)) {
         $cfg = Join-Path $tuneDir ($f.id + '.conf')
         Write-ZLog ('Проверяю финалиста {0} (браузер + скорость)...' -f $f.id) INFO
@@ -239,6 +241,7 @@ try {
             $chosenBrowser = $browser
             break
         }
+        else { $rejected += $f.id }
     }
 
     Save-ZTuneReport -Report $report
@@ -256,7 +259,7 @@ try {
     # equal to it: otherwise the fallback is the profile that was just installed
     # (or one that failed its finalist checks) and the watchdog can never switch.
     $fallbackPath = Join-Path $ZState 'fallback-profile.json'
-    $runnerUp = @($valid | Where-Object { $_.id -ne $best.id } | Select-Object -First 1)
+    $runnerUp = @($valid | Where-Object { $_.id -ne $best.id -and $rejected -notcontains $_.id } | Select-Object -First 1)
     if ($runnerUp.Count -gt 0) {
         $fbProfile = @($allProfiles | Where-Object { $_.id -eq $runnerUp[0].id })[0]
         if ($fbProfile) {
