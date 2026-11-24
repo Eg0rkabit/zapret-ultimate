@@ -77,12 +77,13 @@
 11 Вернуть исходную конфигурацию
 12 Удалить службу
 13 Исправить hosts (чужие записи YouTube)
-14 Отключить QUIC (Brave/Chrome/Edge)
+14 Отключить QUIC (Chrome/Edge/Brave/Yandex)
 15 Включить QUIC обратно
 16 Проверить и заблокировать мёртвые GGC-узлы
 17 Снять блокировки GGC (вернуть все узлы)
 18 Исправить права на папку (закрыть дыру в ACL)
 19 Отключить чужие задачи zapret
+20 Проверка нескольких видео (4 ролика)
 ```
 
 Команды из консоли:
@@ -98,10 +99,11 @@ Zapret.bat list            :: профили и их прошлые оценки
 Zapret.bat apply fake-hfs-ts
 Zapret.bat restore         :: вернуть службу, которая была до установки
 Zapret.bat fix-hosts       :: убрать чужие записи YouTube из hosts
-Zapret.bat quic-off        :: отключить QUIC в Brave/Chrome/Edge (если видео встаёт)
+Zapret.bat quic-off        :: отключить QUIC в Chrome/Edge/Brave/Yandex (если видео встаёт)
 Zapret.bat quic-on         :: вернуть QUIC
 Zapret.bat ggc-check       :: найти и заблокировать мёртвые узлы googlevideo
 Zapret.bat ggc-reset       :: снять управляемые блокировки GGC-узлов
+Zapret.bat playback        :: проверка 4 разных видео (узловые зависания)
 Zapret.bat fix-acl         :: закрыть запись в C:\Zapret обычным пользователям
 Zapret.bat disable-legacy   :: отключить чужие задачи, запускающие zapret
 Zapret.bat uninstall
@@ -150,7 +152,8 @@ Zapret.bat uninstall
 * при падении — перезапускает службу (не более 3 раз за 30 минут);
 * если перезапуск не помог — переключается на резервный профиль из
   последнего тюнинга;
-* всё пишет в `logs\watchdog.log`.
+* всё пишет в `logs\watchdog.log`;
+  интервалы (сторож 5 мин, GGC-проверка 30 мин) задаются в `config\settings.json`.
 
 Удалить сторож: `schtasks /Delete /TN "ZapretUltimate Watchdog" /F`
 (или `Zapret.bat uninstall`).
@@ -161,7 +164,7 @@ Zapret.bat uninstall
 
 * Программа **не меняет** DNS, реестр сети, MTU и настройки адаптеров.
   Единственное исключение — `quic-off`: он пишет политику `QuicAllowed` в
-  `HKLM\SOFTWARE\Policies` для Chrome/Edge/Brave (`quic-on` её убирает).
+  `HKLM\SOFTWARE\Policies` для Chrome/Edge/Brave/Yandex (`quic-on` её убирает).
 * `hosts` меняют три команды: `ggc-check` (блокирует мёртвые GGC-узлы,
   помечает строки `# zapret-ultimate dead ggc`), `ggc-reset` (снимает эти
   блокировки) и `fix-hosts` (убирает только **чужие** записи YouTube,
@@ -201,6 +204,11 @@ SNI к **поведенческому скорингу** и **заморозке
   WireGuard** (UDP), **VLESS + REALITY + XHTTP** с раздельными входом/выходом,
   либо **TG WS Proxy** для Telegram;
 * точечные IP-баны (в том числе /32) zapret не обходит принципиально.
+* Часть роликов YouTube отдаётся **только** с GGC-узлов, чьи IP-диапазоны
+  заблокированы провайдером. Такие ролики не играют ни с zapret, ни без него:
+  `Zapret.bat playback` проверяет 4 ролика и отдельно пишет, что узлы
+  недоступны на уровне IP. Это ограничение провайдера, а не профиля; нужен
+  VPN/транспортный обход.
 
 Программа не обещает невозможного: она делает максимум в своей нише и честно
 показывает, когда проблема не в SNI.
@@ -235,7 +243,7 @@ C:\Zapret\
   bin\            winws.exe, WinDivert, фейк-пейлоады
   lists\          хостлисты и ipset (можно править list-*-user.txt)
   profiles\       library.json — 18 стратегий
-  config\         active.conf — текущая конфигурация winws
+  config\         active.conf — текущая конфигурация winws; settings.json — интервалы
   lib\            общие модули
   tools\          tune.ps1, watchdog.ps1, install.ps1, yt-dlp.exe
   state\          резервные копии, результаты тюнинга
