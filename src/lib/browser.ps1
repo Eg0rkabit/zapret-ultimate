@@ -112,6 +112,7 @@ function Test-ZBrowserPlayback {
         ok = $false; available = $false; browser = ''; reason = ''
         currentTime = 0; readyState = 0; error = 0; bufferedEnd = 0
         hosts = @(); protocols = @(); ggcHost = ''; ggcMbps = 0; sampleUrl = ''
+        title = ''; playability = ''; adShowing = $false
     }
     $browser = $BrowserPath
     if (-not $browser) {
@@ -189,7 +190,15 @@ function Test-ZBrowserPlayback {
     cur = v.currentTime || 0; ready = v.readyState || 0; err = v.error ? v.error.code : 0;
     if (v.buffered && v.buffered.length) bufEnd = v.buffered.end(v.buffered.length - 1);
   }
-  return JSON.stringify({ currentTime: cur, readyState: ready, error: err, bufferedEnd: bufEnd, hosts, protocols, sampleUrl, mbps, title: document.title });
+  const player = document.querySelector('.movie_player');
+  const adShowing = !!(player && player.classList.contains('ad-showing'));
+  let playability = '';
+  try {
+    if (window.ytInitialPlayerResponse && ytInitialPlayerResponse.playabilityStatus) {
+      playability = ytInitialPlayerResponse.playabilityStatus.status || '';
+    }
+  } catch (e) { }
+  return JSON.stringify({ currentTime: cur, readyState: ready, error: err, bufferedEnd: bufEnd, hosts, protocols, sampleUrl, mbps, title: document.title, playability, adShowing });
 })()
 '@
         $json = Invoke-ZCdpEval -Socket $ws -Id 3 -Expression $expr
@@ -204,6 +213,9 @@ function Test-ZBrowserPlayback {
             $result.sampleUrl = [string]$state.sampleUrl
             if ($null -ne $state.mbps) { $result.ggcMbps = [double]$state.mbps }
             if ($result.hosts.Count -gt 0) { $result.ggcHost = $result.hosts[0] }
+            $result.title = [string]$state.title
+            $result.playability = [string]$state.playability
+            $result.adShowing = [bool]$state.adShowing
         }
 
         $result.ok = ($result.error -eq 0 -and $result.currentTime -ge 5)
