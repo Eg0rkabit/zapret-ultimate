@@ -238,12 +238,6 @@ function Restore-ZOriginalService {
     Write-ZLog 'Исходная служба восстановлена.' OK
 }
 
-function Get-ZServiceCommandLine {
-    $img = Get-ZServiceImagePath
-    if (-not $img) { return $null }
-    return $img
-}
-
 # Applies a profile file (json) to the live service.
 function Apply-ZProfile {
     param(
