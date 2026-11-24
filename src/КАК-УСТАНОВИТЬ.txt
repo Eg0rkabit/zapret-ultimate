@@ -40,6 +40,7 @@
    Zapret.bat tune       — полный автоподбор (~3 минуты)
    Zapret.bat quick      — быстрый автоподбор (~2 минуты)
    Zapret.bat test       — тест + скорость + проверка в браузере
+   Zapret.bat playback   — проверить 4 разных видео (узловые зависания)
    Zapret.bat ggc-reset  — снять блокировки мёртвых GGC-узлов
    Zapret.bat fix-acl    — закрыть папку C:\Zapret от записи пользователями
    Zapret.bat disable-legacy — отключить чужие задачи, запускающие zapret
