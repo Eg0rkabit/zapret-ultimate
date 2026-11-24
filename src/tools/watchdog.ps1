@@ -16,13 +16,15 @@ $root = Split-Path -Parent $PSScriptRoot
 $watchLog = Join-Path $ZLogs 'watchdog.log'
 
 # Intervals live in config\settings.json so they can be changed without editing
-# the script; a missing or invalid value falls back to the default below.
+# the script; a missing or invalid value falls back to the defaults below.
 $ggcEveryMinutes = 30
+$autoUpdateDays = 7
 try {
     $cfgPath = Join-Path $ZConf 'settings.json'
     if (Test-Path -LiteralPath $cfgPath) {
         $cfg = Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($cfg.ggcCheckMinutes -and [int]$cfg.ggcCheckMinutes -ge 5) { $ggcEveryMinutes = [int]$cfg.ggcCheckMinutes }
+        if ($null -ne $cfg.autoUpdateDays) { $autoUpdateDays = [int]$cfg.autoUpdateDays }
     }
 } catch { }
 function Write-WLog {
@@ -115,6 +117,26 @@ if (-not $lastGgc -or ((Get-Date) - $lastGgc).TotalMinutes -ge $ggcEveryMinutes)
             Write-WLog 'Запущена фоновая проверка GGC-узлов.' DEBUG
         } catch {
             Write-WLog ('GGC-проверка не запустилась: ' + $_.Exception.Message) WARN
+        }
+    }
+}
+
+# Weekly (configurable) self-update. Only files are replaced: the profile is
+# re-applied by the next manual `Zapret.bat update` or by tuning.
+if ($autoUpdateDays -gt 0 -and -not (Test-ZLock -Name 'operation')) {
+    $updStamp = Join-Path $ZState 'update-last.txt'
+    $lastUpd = $null
+    if (Test-Path -LiteralPath $updStamp) {
+        try { $lastUpd = [datetime]::Parse((Get-Content -LiteralPath $updStamp -Raw).Trim()) } catch { }
+    }
+    if (-not $lastUpd -or ((Get-Date) - $lastUpd).TotalDays -ge $autoUpdateDays) {
+        try {
+            $updScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\update.ps1'
+            Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $updScript + '"'), '-Quiet', '-NoApply') -WindowStyle Hidden | Out-Null
+            (Get-Date).ToString('o') | Set-Content -LiteralPath $updStamp -Encoding UTF8
+            Write-WLog 'Запущена автоматическая проверка обновлений.' DEBUG
+        } catch {
+            Write-WLog ('Автообновление не запустилось: ' + $_.Exception.Message) WARN
         }
     }
 }
