@@ -591,8 +591,10 @@ function Get-ZLegacyTasks {
         if (-not $t -or $t.TaskName -eq $Exclude) { continue }
         foreach ($a in @($t.Actions)) {
             if (-not $a -or -not $a.Execute) { continue }
-            if ($a.Execute -match 'zapret|winws' -and $a.Execute -notlike ("*" + $ZRoot + "*")) {
-                $list += [pscustomobject]@{ Name = $t.TaskName; Path = $t.TaskPath; Execute = $a.Execute; State = [string]$t.State }
+            # A task may hide the old path in Arguments (powershell -File ...).
+            $cmd = (([string]$a.Execute) + ' ' + ([string]$a.Arguments)).Trim()
+            if ($cmd -match 'zapret|winws' -and $cmd -notmatch [regex]::Escape($ZRoot)) {
+                $list += [pscustomobject]@{ Name = $t.TaskName; Path = $t.TaskPath; Execute = $cmd; State = [string]$t.State }
             }
         }
     }
