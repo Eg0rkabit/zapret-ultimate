@@ -1,6 +1,6 @@
 {
     "version":  1,
-    "builtAt":  "2026-11-23T15:10:43.3108399+03:00",
+    "builtAt":  "2026-11-24T10:21:25.6746240+03:00",
     "profiles":  [
                      {
                          "id":  "fake-hfs-ts",
@@ -83,8 +83,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -168,8 +167,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -253,8 +251,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -341,8 +338,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -432,8 +428,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -520,8 +515,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -605,8 +599,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -690,8 +683,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -772,8 +764,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -854,8 +845,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -936,8 +926,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -1012,8 +1001,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -1094,8 +1082,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -1173,8 +1160,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -1246,8 +1232,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -1340,8 +1325,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -1422,8 +1406,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      },
                      {
@@ -1507,8 +1490,7 @@
                                       "--ipset-exclude={LISTS}\\ipset-exclude-user.txt",
                                       "--dpi-desync=fake",
                                       "--dpi-desync-repeats=6",
-                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin",
-                                      "--new"
+                                      "--dpi-desync-fake-quic={BIN}\\quic_initial_www_google_com.bin"
                                   ]
                      }
                  ]
