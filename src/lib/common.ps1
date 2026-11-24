@@ -64,23 +64,6 @@ function Assert-ZAdmin {
     if (-not (Test-ZAdmin)) { throw 'Требуются права администратора. Запустите Zapret.bat (UAC).' }
 }
 
-# Run another .ps1 elevated. The child writes $OutputFile itself if it needs to
-# return data; returns $true when the child exits with code 0.
-function Invoke-ZElevated {
-    param(
-        [Parameter(Mandatory = $true)][string]$ScriptPath,
-        [string[]]$ScriptArgs = @(),
-        [int]$TimeoutSec = 900
-    )
-    $argsList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $ScriptPath)) + $ScriptArgs
-    $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argsList -PassThru -WindowStyle Hidden
-    if (-not $p.WaitForExit($TimeoutSec * 1000)) {
-        try { $p.Kill() } catch { }
-        return $false
-    }
-    return ($p.ExitCode -eq 0)
-}
-
 # ---------------------------------------------------------------- service ---
 function Get-ZServiceState {
     $s = Get-Service -Name $ZServiceName -ErrorAction SilentlyContinue
