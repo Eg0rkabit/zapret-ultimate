@@ -589,6 +589,8 @@ function Get-ZLegacyTasks {
     $list = @()
     foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue)) {
         if (-not $t -or $t.TaskName -eq $Exclude) { continue }
+        # A disabled task cannot fire, so it is not a problem any more.
+        if ([string]$t.State -eq 'Disabled') { continue }
         foreach ($a in @($t.Actions)) {
             if (-not $a -or -not $a.Execute) { continue }
             # A task may hide the old path in Arguments (powershell -File ...).
