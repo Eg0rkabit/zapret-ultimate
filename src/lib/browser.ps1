@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 #  Zapret Ultimate - real browser playback probe (Chrome DevTools Protocol)
 #  Requires PowerShell 5.1 / .NET 4.5+ (ClientWebSocket). No Node.js needed.
 # ============================================================================
@@ -12,6 +12,11 @@ function Get-ZBrowserCandidates {
     if (${env:ProgramFiles(x86)}) { $list += (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe') }
     if (${env:ProgramFiles(x86)}) { $list += (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe') }
     $list += (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe')
+    # Yandex Browser is Chromium-based and speaks CDP; it is used for the
+    # playback test if nothing else is installed.
+    $list += (Join-Path $env:LOCALAPPDATA 'Yandex\YandexBrowser\Application\browser.exe')
+    $list += (Join-Path $env:ProgramFiles 'Yandex\YandexBrowser\Application\browser.exe')
+    if (${env:ProgramFiles(x86)}) { $list += (Join-Path ${env:ProgramFiles(x86)} 'Yandex\YandexBrowser\Application\browser.exe') }
     return @($list | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique)
 }
 
