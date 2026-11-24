@@ -15,6 +15,8 @@ $excl = @(
 )
 
 # Fixed UDP part: QUIC, Discord voice, then generic UDP for ipset.
+# Every group after the first starts with --new; the very last group must NOT
+# end with a trailing --new (that would leave an empty filter group in winws).
 $udp = @(
     '--filter-udp=443',
     '--hostlist={LISTS}\list-general.txt',
@@ -51,8 +53,7 @@ $tail = @(
 ) + $excl + @(
     '--dpi-desync=fake',
     '--dpi-desync-repeats=6',
-    '--dpi-desync-fake-quic={BIN}\quic_initial_www_google_com.bin',
-    '--new'
+    '--dpi-desync-fake-quic={BIN}\quic_initial_www_google_com.bin'
 )
 
 # Variants: applied to both the YouTube (list-google) and the general TCP rules.
