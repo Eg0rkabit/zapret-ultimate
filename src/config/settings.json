@@ -1,5 +1,6 @@
 {
     "version": 1,
     "watchdogMinutes": 5,
-    "ggcCheckMinutes": 30
+    "ggcCheckMinutes": 30,
+    "autoUpdateDays": 7
 }
