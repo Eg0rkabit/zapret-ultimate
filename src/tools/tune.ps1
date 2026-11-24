@@ -204,7 +204,7 @@ try {
             try {
                 $browser = Invoke-ZWinwsSession -ConfigPath $cfg -Action {
                     Start-Sleep -Milliseconds 350
-                    Test-ZBrowserYouTube
+                    Test-ZBrowserPlayback -WaitSec 15 -TimeoutSec 70
                 }
             } catch { Write-ZLog ('  браузерный тест не удался: ' + $_.Exception.Message) WARN }
         }
@@ -285,7 +285,7 @@ try {
 
         $finalOk = ($final.controlsOk -and $final.score -ge 80)
         if ($finalOk -and -not $SkipBrowser) {
-            $finalBrowser = Test-ZBrowserYouTube
+            $finalBrowser = Test-ZBrowserPlayback -WaitSec 15 -TimeoutSec 70
             if ($finalBrowser -and $finalBrowser.available -and -not $finalBrowser.ok) {
                 $finalOk = $false
                 Write-ZLog ('Финальная браузерная проверка не пройдена: ' + $finalBrowser.reason) ERROR
