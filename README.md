@@ -1,4 +1,4 @@
-# Zapret Ultimate
+﻿# Zapret Ultimate
 
 Self-tuning DPI-bypass for Windows built on [zapret](https://github.com/bol-van/zapret)
 (`winws` + WinDivert). Instead of shipping one static `.bat`, it measures what your
@@ -35,7 +35,7 @@ and the 5-minute watchdog, and hardens the folder ACL.
 * **Watchdog** — every 5 minutes: checks the service and connectivity, restarts it,
   and switches to the runner-up profile if that does not help. A global lock keeps
   it away from a running tuning pass, and a lock whose owner process died no longer
-  blocks it.
+  blocks it. Intervals live in `config/settings.json`.
 * **QUIC toggle** — quic-off / quic-on for Brave/Chrome/Edge (HTTP/3 sometimes stalls where TCP works).
 * **Diagnostics** — TLS 1.2/1.3 probes (a curl fallback is shown explicitly),
   HTTP, YouTube throughput, "volume freeze" test against `googlevideo`,
@@ -43,7 +43,8 @@ and the 5-minute watchdog, and hardens the folder ACL.
   IPv6/conflicts/DNS.
 * **Safe GGC blocking** — dead `googlevideo` nodes are blocked one by one; the
   check refuses to act when the whole network looks down and never blocks every
-  node at once.
+  node at once. A node that comes back to life is unblocked automatically
+  (DoH resolution + direct-IP check).
 * **No DNS or adapter changes**. `hosts` is modified only by `ggc-check`
   (blocks dead GGC nodes), `ggc-reset` (removes them) and `fix-hosts` (removes
   foreign YouTube entries); each change is backed up in `state\`.
@@ -60,6 +61,7 @@ Zapret.bat apply fake-hfs-ts
 Zapret.bat fix-hosts  :: remove foreign 0.0.0.0 googlevideo entries
 Zapret.bat ggc-check  :: find and block dead GGC nodes
 Zapret.bat ggc-reset  :: unblock all managed GGC entries
+Zapret.bat playback   :: check 4 different videos (node-specific stalls)
 Zapret.bat quic-off    :: disable HTTP/3 in Brave/Chrome/Edge
 Zapret.bat quic-on     :: re-enable HTTP/3
 Zapret.bat fix-acl    :: restrict write access to C:\Zapret
@@ -76,6 +78,11 @@ Zapret.bat uninstall
   `C:\Zapret`.
 
 ## Honest limitations (late 2026)
+
+Some videos are served **only** from GGC nodes whose IP ranges are blocked by
+the provider. Zapret.bat playback checks four videos and says explicitly when
+all nodes of a video are unreachable at the IP level: no DPI-bypass profile can
+fix that, a VPN/transport tunnel is required.
 
 Russian TSPU has moved from SNI-signature blocking to behavioural scoring and
 TCP volume freezes (a connection passes ~8–32 KB and stalls without RST). Packet
