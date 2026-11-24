@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 #  Zapret Ultimate - watchdog
 #  Runs from Task Scheduler as SYSTEM every 5 minutes.
 #  1. ensuress the service and winws.exe are alive;
@@ -17,6 +17,10 @@ $watchLog = Join-Path $ZLogs 'watchdog.log'
 function Write-WLog {
     param([string]$Message, [string]$Level = 'INFO')
     $line = '{0} [{1,-5}] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level, $Message
+    try {
+        $fi = Get-Item -LiteralPath $watchLog -ErrorAction SilentlyContinue
+        if ($fi -and $fi.Length -gt 5MB) { Move-Item -LiteralPath $watchLog -Destination ($watchLog + '.1') -Force -ErrorAction SilentlyContinue }
+    } catch { }
     Add-Content -LiteralPath $watchLog -Value $line -Encoding UTF8
     if ($Level -ne 'DEBUG') { Write-ZLog $Message $Level }
 }
@@ -43,13 +47,13 @@ function Save-WState {
 
 # ---------------------------------------------------------------- liveness --
 $state = Get-ZServiceState
-$procs = @(Get-ZWinwsProcesses)
-if ($state -ne 'Running' -or $procs.Count -eq 0) {
+$winwsAlive = Test-ZWinwsRunning
+if ($state -ne 'Running' -or -not $winwsAlive) {
     if ($recent.Count -ge 3 -and -not $Force) {
         Write-WLog ("Служба не работает, но лимит перезапусков исчерпан ({0} за 30 мин). Жду." -f $recent.Count) WARN
         return
     }
-    Write-WLog ("Служба: state={0}, процессов winws={1}. Запускаю." -f $state, $procs.Count) WARN
+    Write-WLog ("Служба: state={0}, winws запущен={1}. Запускаю." -f $state, $winwsAlive) WARN
     try {
         if ($state -eq 'NotInstalled') {
             # Reinstall the last known profile instead of giving up.
@@ -136,12 +140,16 @@ if ((Test-Path -LiteralPath $fallbackPath) -and $info) {
         Write-WLog ("Переключаюсь на резервный профиль: {0}" -f $fb.id) WARN
         try {
             Apply-ZProfile -ProfileObject $fb | Out-Null
+            $ws.lastProfileSwitch = (Get-Date).ToString('o')
+            Save-WState
             $after = Test-ZAfterRestart
             Write-WLog ('После резервного профиля: ' + (Format-ZProbeSummary -Scored $after)) INFO
             if ($after.controlsOk -and $after.score -ge 60) { return }
         } catch {
             Write-WLog ('Резервный профиль не сработал: ' + $_.Exception.Message) ERROR
         }
+    } else {
+        Write-WLog ('Резервный профиль совпадает с активным ({0}) — переключаться некуда.' -f $info.profileId) DEBUG
     }
 }
 
