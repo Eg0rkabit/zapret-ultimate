@@ -14,6 +14,17 @@ $root = Split-Path -Parent $PSScriptRoot
 . "$root\lib\probe.ps1"
 
 $watchLog = Join-Path $ZLogs 'watchdog.log'
+
+# Intervals live in config\settings.json so they can be changed without editing
+# the script; a missing or invalid value falls back to the default below.
+$ggcEveryMinutes = 30
+try {
+    $cfgPath = Join-Path $ZConf 'settings.json'
+    if (Test-Path -LiteralPath $cfgPath) {
+        $cfg = Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($cfg.ggcCheckMinutes -and [int]$cfg.ggcCheckMinutes -ge 5) { $ggcEveryMinutes = [int]$cfg.ggcCheckMinutes }
+    }
+} catch { }
 function Write-WLog {
     param([string]$Message, [string]$Level = 'INFO')
     $line = '{0} [{1,-5}] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level, $Message
@@ -95,7 +106,7 @@ $lastGgc = $null
 if (Test-Path -LiteralPath $ggcStamp) {
     try { $lastGgc = [datetime]::Parse((Get-Content -LiteralPath $ggcStamp -Raw).Trim()) } catch { }
 }
-if (-not $lastGgc -or ((Get-Date) - $lastGgc).TotalMinutes -ge 30) {
+if (-not $lastGgc -or ((Get-Date) - $lastGgc).TotalMinutes -ge $ggcEveryMinutes) {
     if (-not (Test-ZLock -Name 'operation')) {
         try {
             $zp = Join-Path (Split-Path -Parent $PSScriptRoot) 'Zapret.ps1'
