@@ -1,8 +1,9 @@
 ﻿# ============================================================================
 #  Zapret Ultimate - self-update from GitHub
-#  Downloads the release ZIP, validates it, backs up the current package and
-#  copies the new files over the installed folder. The current profile is
-#  re-applied afterwards unless -NoApply is given.
+#  Downloads only the code/config files over raw.githubusercontent.com (a few
+#  hundred KB, GitHub release assets are throttled on some ISPs), validates
+#  every PowerShell file, backs up the replaced files and applies the profile.
+#  Binaries (bin\, yt-dlp.exe, ipset-all.txt) are never touched.
 # ============================================================================
 param(
     [switch]$Check,
@@ -15,9 +16,41 @@ $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $root 'lib\common.ps1')
 
 $repo = 'Eg0rkabit/zapret-ultimate'
-$versionUrl = 'https://raw.githubusercontent.com/' + $repo + '/main/src/version.txt'
-$zipUrl = 'https://github.com/' + $repo + '/releases/latest/download/Zapret-Ultimate-Full.zip'
+$rawBase = 'https://raw.githubusercontent.com/' + $repo + '/main/src'
 $updateLog = Join-Path $ZLogs 'update.log'
+$ProgressPreference = 'SilentlyContinue'
+
+# Files that make up the program. Binaries and the big ipset are deliberately
+# excluded: they never change between code releases and would make the update
+# slow and fragile.
+$updateFiles = @(
+    'version.txt',
+    'Zapret.ps1',
+    'Zapret.bat',
+    'Install.bat',
+    'README.md',
+    'КАК-УСТАНОВИТЬ.txt',
+    'lib\common.ps1',
+    'lib\engine.ps1',
+    'lib\probe.ps1',
+    'lib\browser.ps1',
+    'tools\tune.ps1',
+    'tools\watchdog.ps1',
+    'tools\install.ps1',
+    'tools\update.ps1',
+    'tools\build-profiles.ps1',
+    'tools\fix-encoding.cmd',
+    'profiles\library.json',
+    'config\targets.json',
+    'config\settings.json',
+    'lists\list-general.txt',
+    'lists\list-general-user.txt',
+    'lists\list-google.txt',
+    'lists\list-exclude.txt',
+    'lists\list-exclude-user.txt',
+    'lists\ipset-exclude.txt',
+    'lists\ipset-exclude-user.txt'
+)
 
 function Write-U {
     param([string]$Message, [string]$Color = 'Gray')
@@ -29,7 +62,7 @@ function Write-U {
 function Get-ZRemoteVersion {
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
     try {
-        $v = (Invoke-WebRequest -Uri $versionUrl -UseBasicParsing -TimeoutSec 15).Content.Trim().TrimStart([char]0xFEFF)
+        $v = (Invoke-WebRequest -Uri ($rawBase + '/version.txt') -UseBasicParsing -TimeoutSec 20).Content.Trim().TrimStart([char]0xFEFF)
         if ($v -match '^\d+\.\d+\.\d+$') { return $v }
     } catch { }
     return $null
@@ -66,36 +99,44 @@ if ($Check) {
 $tmp = Join-Path $env:TEMP ('zapret-update-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 try {
-    $zip = Join-Path $tmp 'pkg.zip'
-    Write-U 'Скачиваю пакет с GitHub...'
-    Invoke-WebRequest -Uri $zipUrl -OutFile $zip -UseBasicParsing -TimeoutSec 240
-    $x = Join-Path $tmp 'x'
-    Expand-Archive -LiteralPath $zip -DestinationPath $x -Force
-    $pkg = Get-ChildItem -LiteralPath $x -Directory | Select-Object -First 1
-    if (-not $pkg -or -not (Test-Path -LiteralPath (Join-Path $pkg.FullName 'Zapret.ps1'))) {
-        throw 'Архив обновления повреждён: нет Zapret.ps1'
+    Write-U 'Скачиваю файлы с GitHub...'
+    foreach ($rel in $updateFiles) {
+        $uri = [Uri]::EscapeUriString($rawBase + '/' + $rel.Replace('\', '/'))
+        $dst = Join-Path $tmp $rel
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+        Invoke-WebRequest -Uri $uri -OutFile $dst -UseBasicParsing -TimeoutSec 60
     }
-    # Cheap sanity check: the new main script must at least parse.
-    $tokens = $null; $errors = $null
-    [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pkg.FullName 'Zapret.ps1'), [ref]$tokens, [ref]$errors)
-    if ($errors.Count -gt 0) { throw ('Новый Zapret.ps1 не парсится: ' + $errors[0].Message) }
+    $got = @(Get-ChildItem -LiteralPath $tmp -Recurse -File)
+    if ($got.Count -lt ($updateFiles.Count - 1)) { throw ('Скачано только {0} из {1} файлов' -f $got.Count, $updateFiles.Count) }
+
+    # The new main script and every library must parse before anything is replaced.
+    foreach ($ps in @($got | Where-Object { $_.Extension -eq '.ps1' })) {
+        $tokens = $null; $errors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($ps.FullName, [ref]$tokens, [ref]$errors)
+        if ($errors.Count -gt 0) { throw ('Новый файл ' + $ps.Name + ' не парсится: ' + $errors[0].Message) }
+    }
 
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $backup = Join-Path $ZState ('update-backup-' + $stamp)
     New-Item -ItemType Directory -Force -Path $backup | Out-Null
-    Write-U ('Сохраняю текущую версию в ' + $backup)
-    $rc = Start-Process -FilePath 'robocopy.exe' -ArgumentList @(
-        ('"{0}"' -f $root), ('"{0}"' -f $backup),
-        '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/XD', 'logs', 'state', '/R:1', '/W:1'
-    ) -Wait -PassThru -WindowStyle Hidden
-    if ($rc.ExitCode -ge 8) { throw ('Не удалось создать бэкап (robocopy ' + $rc.ExitCode + ')') }
+    foreach ($rel in $updateFiles) {
+        $cur = Join-Path $root $rel
+        if (Test-Path -LiteralPath $cur) {
+            $bd = Join-Path $backup $rel
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $bd) | Out-Null
+            Copy-Item -LiteralPath $cur -Destination $bd -Force
+        }
+    }
+    Write-U ('Бэкап заменяемых файлов: ' + $backup)
 
-    Write-U 'Копирую новые файлы...'
-    $rc = Start-Process -FilePath 'robocopy.exe' -ArgumentList @(
-        ('"{0}"' -f $pkg.FullName), ('"{0}"' -f $root),
-        '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/XD', 'logs', 'state', '/XF', '*.zip', '/R:1', '/W:1'
-    ) -Wait -PassThru -WindowStyle Hidden
-    if ($rc.ExitCode -ge 8) { throw ('robocopy завершился с кодом ' + $rc.ExitCode) }
+    foreach ($rel in $updateFiles) {
+        $srcFile = Join-Path $tmp $rel
+        $dstFile = Join-Path $root $rel
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dstFile) | Out-Null
+        $tmpDst = $dstFile + '.dsh-new'
+        [IO.File]::WriteAllBytes($tmpDst, [IO.File]::ReadAllBytes($srcFile))
+        Move-Item -LiteralPath $tmpDst -Destination $dstFile -Force
+    }
     $enc = Join-Path $root 'tools\fix-encoding.cmd'
     if (Test-Path -LiteralPath $enc) { & $enc | Out-Null }
     Set-Content -LiteralPath $versionFile -Value $remote -Encoding ASCII
