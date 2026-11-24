@@ -34,12 +34,19 @@ and the 5-minute watchdog, and hardens the folder ACL.
   interrupted, if installation fails, or if the final check is worse than before.
 * **Watchdog** — every 5 minutes: checks the service and connectivity, restarts it,
   and switches to the runner-up profile if that does not help. A global lock keeps
-  it away from a running tuning pass.
+  it away from a running tuning pass, and a lock whose owner process died no longer
+  blocks it.
 * **QUIC toggle** — quic-off / quic-on for Brave/Chrome/Edge (HTTP/3 sometimes stalls where TCP works).
-* **Diagnostics** — TLS 1.2/1.3 probes, HTTP, YouTube throughput, "volume freeze"
-  test against `googlevideo`, hosts-file check (`fix-hosts`), IPv6/conflicts/DNS.
-* **No DNS or adapter changes**; `hosts` is touched only by the explicit
-  `fix-hosts` command and always with a backup.
+* **Diagnostics** — TLS 1.2/1.3 probes (a curl fallback is shown explicitly),
+  HTTP, YouTube throughput, "volume freeze" test against `googlevideo`,
+  hosts-file check, folder ACL check, foreign-task check,
+  IPv6/conflicts/DNS.
+* **Safe GGC blocking** — dead `googlevideo` nodes are blocked one by one; the
+  check refuses to act when the whole network looks down and never blocks every
+  node at once.
+* **No DNS or adapter changes**. `hosts` is modified only by `ggc-check`
+  (blocks dead GGC nodes), `ggc-reset` (removes them) and `fix-hosts` (removes
+  foreign YouTube entries); each change is backed up in `state\`.
 
 ## Usage
 
@@ -48,11 +55,15 @@ Zapret.bat            :: menu
 Zapret.bat status
 Zapret.bat test       :: availability + YouTube speed + browser check
 Zapret.bat tune       :: full auto-tune (~3 min)
-Zapret.bat quick      :: quick auto-tune (~2 min)
+Zapret.bat quick      :: quick auto-tune (~2 min, 6 main profiles)
 Zapret.bat apply fake-hfs-ts
-Zapret.bat fix-hosts  :: remove stale 0.0.0.0 googlevideo entries
+Zapret.bat fix-hosts  :: remove foreign 0.0.0.0 googlevideo entries
+Zapret.bat ggc-check  :: find and block dead GGC nodes
+Zapret.bat ggc-reset  :: unblock all managed GGC entries
 Zapret.bat quic-off    :: disable HTTP/3 in Brave/Chrome/Edge
 Zapret.bat quic-on     :: re-enable HTTP/3
+Zapret.bat fix-acl    :: restrict write access to C:\Zapret
+Zapret.bat disable-legacy :: disable foreign tasks that start zapret
 Zapret.bat restore    :: restore the service that existed before installation
 Zapret.bat uninstall
 ```
@@ -75,7 +86,10 @@ VLESS+REALITY+XHTTP, TG WS Proxy). Targeted IP bans are also out of scope.
 ## Security
 
 * The folder is locked down by the installer: Administrators/SYSTEM write,
-  Users read-only — the watchdog executes scripts from it as SYSTEM.
+  Users read-only — the watchdog executes scripts from it as SYSTEM. The
+  installer verifies the result and reports a failure loudly; `Zapret.bat diagnose`
+  shows the current state and `Zapret.bat fix-acl` repairs it (e.g. after the
+  folder was recreated by a manual copy).
 * `restore` brings back the original service command line, start type and display
   name; `state/service-backup.json` keeps the backup.
 * TCP timestamps are enabled only if they were disabled, and reverted on uninstall.
